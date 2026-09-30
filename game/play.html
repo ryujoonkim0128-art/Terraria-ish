@@ -1,0 +1,19 @@
+<title>Hearthlands</title>
+<style>
+  /* Single dark look: the game canvas centred on a night ground, scaled in whole pixels. */
+  :root { --bg: #0d0a0e; --fg: #e8dcc0; --dim: #8a7a68; color-scheme: dark; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace;
+         display: flex; align-items: center; justify-content: center; padding-inline: 16px; padding-block: 16px; box-sizing: border-box; overflow: hidden; }
+  #wrap { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+  #stage { position: relative; max-width: 100%; }
+  #stage canvas { position: absolute; inset: 0; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #hud { cursor: crosshair; touch-action: none; }
+  #hud:focus-visible { outline: 2px solid var(--fg); }
+  #note { color: var(--dim); text-align: center; max-width: 60ch; margin: 0; }
+</style>
+<div id="wrap">
+  <div id="stage"><canvas id="view" width="640" height="360"></canvas><canvas id="hud" width="640" height="360" tabindex="0" aria-label="Hearthlands game"></canvas></div>
+  <p id="note" hidden>Hearthlands needs a keyboard and mouse.</p>
+</div>
+<script type="module" src="src/main.js"></script>
