@@ -1,0 +1,127 @@
+<title>Ten Thousand Windows</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@700&text=%E8%90%AC%E5%AE%B6%E7%87%88%E7%81%AB&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&family=Silkscreen&display=swap">
+<style>
+/* Layout: one pixel-scaled stage, centred; HTML overlays sit on the stage in stage units (--s = px per game pixel). */
+:root {
+  --ink: #0b0a0e;      /* the dark between buildings */
+  --paper: #ece3cc;    /* old newsprint text */
+  --dim: #8c8577;
+  --neon: #ff3b5c;     /* the one loud colour: shop neon */
+  --jade: #5ad8ff;     /* tasks and the way forward */
+  --amber: #ffd070;    /* bulbs, money */
+  --panel: rgba(12, 10, 14, 0.78);
+  --font-ui: 'VT323', ui-monospace, 'Courier New', monospace;
+  --font-label: 'Silkscreen', 'VT323', ui-monospace, monospace;
+  --font-han: 'Noto Serif TC', 'Songti TC', 'PMingLiU', serif;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--ink); color: var(--paper); font-family: var(--font-ui); overflow: hidden; display: grid; place-items: center; -webkit-user-select: none; user-select: none; touch-action: none; }
+#wrap { position: relative; --s: 3; width: 1152px; height: 648px; overflow: hidden; background: #000; box-shadow: 0 0 0 1px #1c1a20; }
+#screen { width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+.u { position: absolute; font-size: calc(var(--s) * 6.2px); line-height: 1; pointer-events: none; }
+
+#hud { left: calc(var(--s) * 5px); top: calc(var(--s) * 4px); display: grid; gap: calc(var(--s) * 1.5px); text-shadow: 0 calc(var(--s) * 0.5px) 0 #000; }
+#hud .clock b { color: var(--amber); font-weight: normal; }
+#hud .money { color: var(--amber); }
+#hud .rent { color: var(--dim); margin-left: .4em; }
+#hud .rent.due { color: var(--neon); }
+#hud .bars { display: grid; grid-template-columns: auto auto; gap: calc(var(--s) * 1px) calc(var(--s) * 2px); align-items: center; margin-top: calc(var(--s) * 1px); }
+#hud label { font-family: var(--font-label); font-size: calc(var(--s) * 3.3px); color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
+.bar { display: block; width: calc(var(--s) * 34px); height: calc(var(--s) * 2px); background: rgba(255,255,255,.08); }
+.bar i { display: block; height: 100%; }
+.bar.hp i { background: #d85a48; } .bar.food i { background: #e0a040; } .bar.stam i { background: #7ac8a0; }
+.bar.low i { animation: blink .6s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+
+#tasks { right: calc(var(--s) * 5px); top: calc(var(--s) * 4px); width: calc(var(--s) * 120px); text-align: right; text-shadow: 0 calc(var(--s) * 0.5px) 0 #000; }
+#tasks h3 { margin: 0 0 calc(var(--s) * 1.5px); font: normal calc(var(--s) * 3.4px) var(--font-label); color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
+#tasks h3 small { font-size: 1em; opacity: .7; margin-left: .5em; }
+#tasks ul { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(var(--s) * 2px); }
+#tasks li span { display: block; color: var(--paper); opacity: .75; text-wrap: balance; }
+#tasks li em { font-style: normal; color: var(--dim); font-size: .85em; }
+#tasks li.on span { color: var(--jade); opacity: 1; }
+#tasks li.on span::before { content: '▸ '; }
+#tasks li.letter span { color: #ffb0d0; opacity: .85; }
+
+#dialog { left: 50%; bottom: calc(var(--s) * 6px); transform: translateX(-50%); width: min(calc(var(--s) * 250px), 94%); background: var(--panel); border: calc(var(--s) * 0.5px) solid #3a3440; padding: calc(var(--s) * 4px) calc(var(--s) * 5px); pointer-events: auto; box-sizing: border-box; }
+#dname { font-family: var(--font-label); font-size: calc(var(--s) * 3.6px); color: var(--amber); text-transform: uppercase; letter-spacing: .06em; margin-bottom: calc(var(--s) * 2px); }
+#dtext { font-size: calc(var(--s) * 7px); line-height: 1.05; min-height: 2.1em; text-wrap: pretty; }
+#dchoices { display: flex; flex-wrap: wrap; gap: calc(var(--s) * 3px); margin-top: calc(var(--s) * 3px); justify-content: flex-end; }
+#dchoices button, #dchoices .more { font: inherit; font-size: calc(var(--s) * 6px); color: var(--paper); background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: .35em; }
+#dchoices .more { color: var(--dim); }
+#dchoices button:hover, #dchoices button:focus-visible { color: var(--jade); outline: none; }
+kbd { font-family: var(--font-label); font-size: .55em; border: 1px solid currentColor; padding: .1em .35em; opacity: .8; }
+
+#toast { left: 50%; top: calc(var(--s) * 30px); transform: translateX(-50%); display: grid; gap: calc(var(--s) * 1.5px); justify-items: center; width: 80%; }
+#toast .t { background: var(--panel); padding: calc(var(--s) * 1.2px) calc(var(--s) * 3px); text-align: center; animation: tin .4s ease-out; transition: opacity .8s; }
+#toast .t.out { opacity: 0; }
+@keyframes tin { from { opacity: 0; transform: translateY(-4px); } }
+
+#help { left: calc(var(--s) * 5px); bottom: calc(var(--s) * 4px); font-size: calc(var(--s) * 5px); color: var(--dim); line-height: 1.15; text-shadow: 0 1px 0 #000; }
+#help b { color: var(--paper); font-weight: normal; }
+
+#story { inset: 0; background: #000; display: grid; place-items: center; opacity: 0; transition: opacity .6s; pointer-events: auto; cursor: pointer; }
+#story.show { opacity: 1; }
+#story.auto { background: rgba(0,0,0,.92); }
+#stext { max-width: 62%; font-size: calc(var(--s) * 8.5px); line-height: 1.15; text-align: center; text-wrap: balance; color: var(--paper); }
+#stext.in { animation: sin 1.1s ease-out; }
+@keyframes sin { from { opacity: 0; filter: blur(2px); } }
+#story::after { content: 'press E'; position: absolute; bottom: calc(var(--s) * 8px); font-family: var(--font-label); font-size: calc(var(--s) * 3.2px); color: var(--dim); letter-spacing: .1em; text-transform: uppercase; }
+#story.auto::after { content: ''; }
+
+#title { inset: 0; display: grid; align-content: center; justify-items: center; gap: calc(var(--s) * 3px); pointer-events: auto; background: radial-gradient(ellipse at 50% 45%, rgba(0,0,0,.55), rgba(0,0,0,0) 65%); }
+#title .han { font-family: var(--font-han); font-weight: 700; font-size: calc(var(--s) * 15px); color: var(--neon); letter-spacing: .25em; text-shadow: 0 0 calc(var(--s) * 3px) rgba(255,59,92,.75), 0 0 calc(var(--s) * 10px) rgba(255,59,92,.35); animation: flick 7s infinite; margin-right: -.25em; }
+@keyframes flick { 0%, 91%, 93%, 100% { opacity: 1; } 92% { opacity: .35; } }
+#title h1 { margin: 0; font: normal calc(var(--s) * 9px) var(--font-label); letter-spacing: .14em; text-transform: uppercase; color: var(--paper); text-align: center; }
+#title p { margin: 0; font-size: calc(var(--s) * 6.2px); color: var(--dim); max-width: 70%; text-align: center; text-wrap: balance; }
+#start { margin-top: calc(var(--s) * 6px); font: normal calc(var(--s) * 4px) var(--font-label); letter-spacing: .14em; text-transform: uppercase; color: var(--ink); background: var(--amber); border: 0; padding: calc(var(--s) * 2px) calc(var(--s) * 5px); cursor: pointer; }
+#start:focus-visible { outline: calc(var(--s) * 0.5px) solid var(--paper); outline-offset: calc(var(--s) * 1px); }
+#title .keys { font-size: calc(var(--s) * 4.6px); color: var(--dim); opacity: .8; }
+
+#over { inset: 0; display: grid; place-items: center; align-content: center; gap: calc(var(--s) * 4px); background: #000; pointer-events: auto; }
+#over h2 { margin: 0; font: normal calc(var(--s) * 7px) var(--font-label); letter-spacing: .12em; text-transform: uppercase; color: var(--neon); }
+#restart { font: normal calc(var(--s) * 4px) var(--font-label); letter-spacing: .14em; text-transform: uppercase; color: var(--ink); background: var(--amber); border: 0; padding: calc(var(--s) * 2px) calc(var(--s) * 5px); cursor: pointer; }
+
+#touch { position: absolute; inset: auto 0 0 0; display: flex; justify-content: space-between; padding: calc(var(--s) * 3px); pointer-events: none; }
+#touch .grp { display: grid; grid-template-columns: repeat(3, calc(var(--s) * 16px)); gap: calc(var(--s) * 1.5px); pointer-events: auto; }
+#touch button { height: calc(var(--s) * 14px); font: normal calc(var(--s) * 4px) var(--font-label); color: var(--paper); background: rgba(20,18,24,.55); border: 1px solid rgba(255,255,255,.15); border-radius: calc(var(--s) * 2px); touch-action: none; }
+@media (prefers-reduced-motion: reduce) { #title .han, #stext.in, .bar.low i, #toast .t { animation: none; } }
+</style>
+
+<div id="wrap">
+  <canvas id="screen" width="384" height="216"></canvas>
+  <div id="hud" class="u" hidden></div>
+  <div id="tasks" class="u" hidden></div>
+  <div id="toast" class="u"></div>
+  <div id="help" class="u" hidden><b>A D</b> walk · <b>W S</b> climb · <b>Space</b> jump · <b>Shift</b> run · <b>E</b> talk / use · <b>M</b> map · <b>T</b> hold to pass time · <b>N</b> sound · <b>H</b> hide</div>
+  <div id="dialog" class="u" hidden><div id="dname"></div><div id="dtext"></div><div id="dchoices"></div></div>
+  <div id="title" class="u">
+    <div class="han" aria-hidden="true">萬家燈火</div>
+    <h1>Ten Thousand Windows</h1>
+    <p>A city grown into one building. You are one more person inside it.</p>
+    <button id="start" type="button">Enter the city</button>
+    <div class="keys">headphones help · keyboard: A D W S, Space, E, M</div>
+  </div>
+  <div id="story" class="u" hidden><div id="stext"></div></div>
+  <div id="over" class="u" hidden><h2>Evicted</h2><button id="restart" type="button">Try another city</button></div>
+  <div id="touch" hidden>
+    <div class="grp"><button data-k="a">◀</button><button data-k="w">▲</button><button data-k="d">▶</button><span></span><button data-k="s">▼</button><span></span></div>
+    <div class="grp"><button data-k="m">map</button><button data-k="e">E</button><button data-k=" ">jump</button><span></span><button data-k="Shift">run</button><span></span></div>
+  </div>
+</div>
+
+<script src="js/util.js"></script>
+<script src="js/gen.js"></script>
+<script src="js/bake.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/light.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/story.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/game.js"></script>
