@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hearthburrow</title>
+<style>
+  /* One screen: the game canvas centred on a dark ground, scaled in whole pixels. */
+  :root { --bg: #0c090d; --fg: #e8dcc0; color-scheme: dark; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace;
+         display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #stage { position: relative; }
+  #stage canvas { position: absolute; inset: 0; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #hud { cursor: none; touch-action: none; outline: none; }
+  #note { position: fixed; bottom: 16px; left: 16px; right: 16px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="view" width="480" height="270"></canvas><canvas id="hud" width="480" height="270" tabindex="0" aria-label="Hearthburrow"></canvas></div>
+<p id="note" hidden></p>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
