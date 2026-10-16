@@ -13,25 +13,26 @@ export const RARITIES = {
 // multi: keeps fruiting after it is grown (n fruits, each regrows in `regrow`). r: room the plant needs.
 // size: how big the plant is drawn (the starter crops are kept small so a young garden stays tidy).
 // qty: how many the shop gets per restock, when it differs from the rarity's usual amount.
-// Prices and sell values come from test/economy.mjs: the two carrots you start with pay for a Strawberry within the
-// tutorial, an attentive player gets Blueberry about four minutes later, Tulip eight after that, and each seed after
-// takes longer, up to two hours for the Beanstalk: about ten hours from a fresh start, Market Day included.
+// Prices and sell values come from test/economy.mjs, played at a human pace (about three fruit picked a second): the two
+// carrots you start with pay for a Strawberry within the tutorial, Blueberry comes about six minutes later, Tulip four
+// after that, and each seed after takes a little longer, up to an hour and a half for the Beanstalk: about seven hours
+// from a fresh start, Market Day included.
 export const CROPS = [
   { id: 'carrot', name: 'Carrot', rarity: 'common', price: 10, grow: 30, value: 15, kg: 0.24, r: 1.2, size: 0.68, qty: [10, 15] },
   { id: 'strawberry', name: 'Strawberry', rarity: 'common', price: 25, grow: 20, multi: true, n: 3, regrow: 17, value: 2, kg: 0.29, r: 1.9, size: 0.7, qty: [10, 14] },
   { id: 'blueberry', name: 'Blueberry', rarity: 'uncommon', price: 380, grow: 30, multi: true, n: 5, regrow: 20, value: 8, kg: 0.17, r: 2.3, size: 0.76, qty: [8, 12] },
-  { id: 'tulip', name: 'Orange Tulip', rarity: 'uncommon', price: 23000, grow: 60, value: 28000, kg: 0.05, r: 1.3, size: 0.78 },
-  { id: 'tomato', name: 'Tomato', rarity: 'rare', price: 230000, grow: 60, multi: true, n: 3, regrow: 25, value: 1600, kg: 0.44, r: 2.3, size: 0.85 },
-  { id: 'corn', name: 'Corn', rarity: 'rare', price: 350000, grow: 70, multi: true, n: 2, regrow: 30, value: 2700, kg: 1.9, r: 2.5, size: 0.88 },
-  { id: 'watermelon', name: 'Watermelon', rarity: 'legendary', price: 960000, grow: 120, value: 1100000, kg: 7.3, r: 4.2 },
-  { id: 'pumpkin', name: 'Pumpkin', rarity: 'legendary', price: 14000000, grow: 135, value: 16000000, kg: 6.9, r: 4 },
-  { id: 'apple', name: 'Apple', rarity: 'legendary', price: 120000000, grow: 100, multi: true, n: 5, regrow: 35, value: 250000, kg: 2.9, r: 5.2 },
-  { id: 'coconut', name: 'Coconut', rarity: 'mythical', price: 190000000, grow: 120, multi: true, n: 3, regrow: 40, value: 530000, kg: 5.8, r: 4.5 },
-  { id: 'dragonfruit', name: 'Dragon Fruit', rarity: 'mythical', price: 750000000, grow: 140, multi: true, n: 3, regrow: 45, value: 1600000, kg: 11.4, r: 4 },
-  { id: 'mango', name: 'Mango', rarity: 'mythical', price: 3900000000, grow: 160, multi: true, n: 4, regrow: 50, value: 5100000, kg: 14.3, r: 5.4 },
-  { id: 'grape', name: 'Grape', rarity: 'divine', price: 9000000000, grow: 200, multi: true, n: 4, regrow: 60, value: 11000000, kg: 2.9, r: 4.4 },
-  { id: 'mushroom', name: 'Mushroom', rarity: 'divine', price: 21000000000, grow: 240, value: 23000000000, kg: 25.9, r: 4.2 },
-  { id: 'beanstalk', name: 'Beanstalk', rarity: 'prismatic', price: 540000000000, grow: 300, multi: true, n: 3, regrow: 80, value: 860000000, kg: 9.5, r: 3.6 },
+  { id: 'tulip', name: 'Orange Tulip', rarity: 'uncommon', price: 2600, grow: 60, value: 3100, kg: 0.05, r: 1.3, size: 0.78 },
+  { id: 'tomato', name: 'Tomato', rarity: 'rare', price: 22000, grow: 60, multi: true, n: 3, regrow: 25, value: 380, kg: 0.44, r: 2.3, size: 0.85 },
+  { id: 'corn', name: 'Corn', rarity: 'rare', price: 35000, grow: 70, multi: true, n: 2, regrow: 30, value: 880, kg: 1.9, r: 2.5, size: 0.88 },
+  { id: 'watermelon', name: 'Watermelon', rarity: 'legendary', price: 110000, grow: 120, value: 130000, kg: 7.3, r: 4.2 },
+  { id: 'pumpkin', name: 'Pumpkin', rarity: 'legendary', price: 1200000, grow: 135, value: 1300000, kg: 6.9, r: 4 },
+  { id: 'apple', name: 'Apple', rarity: 'legendary', price: 8000000, grow: 100, multi: true, n: 5, regrow: 35, value: 72000, kg: 2.9, r: 5.2 },
+  { id: 'coconut', name: 'Coconut', rarity: 'mythical', price: 26000000, grow: 120, multi: true, n: 3, regrow: 40, value: 360000, kg: 5.8, r: 4.5 },
+  { id: 'dragonfruit', name: 'Dragon Fruit', rarity: 'mythical', price: 310000000, grow: 140, multi: true, n: 3, regrow: 45, value: 4100000, kg: 11.4, r: 4 },
+  { id: 'mango', name: 'Mango', rarity: 'mythical', price: 3500000000, grow: 160, multi: true, n: 4, regrow: 50, value: 33000000, kg: 14.3, r: 5.4 },
+  { id: 'grape', name: 'Grape', rarity: 'divine', price: 44000000000, grow: 200, multi: true, n: 4, regrow: 60, value: 420000000, kg: 2.9, r: 4.4 },
+  { id: 'mushroom', name: 'Mushroom', rarity: 'divine', price: 830000000000, grow: 240, value: 910000000000, kg: 25.9, r: 4.2 },
+  { id: 'beanstalk', name: 'Beanstalk', rarity: 'prismatic', price: 20000000000000, grow: 300, multi: true, n: 3, regrow: 80, value: 300000000000, kg: 9.5, r: 3.6 },
 ];
 export const CROP = Object.fromEntries(CROPS.map((c) => [c.id, c]));
 const PLURAL = { Strawberry: 'Strawberries', Blueberry: 'Blueberries', Tomato: 'Tomatoes', Mango: 'Mangoes', Corn: 'Corn', 'Dragon Fruit': 'Dragon Fruit', Beanstalk: 'Beanstalk beans' };

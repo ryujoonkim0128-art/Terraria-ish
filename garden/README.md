@@ -34,11 +34,11 @@ Add it to your home screen for fullscreen. Progress saves on the device.
   worth much more).
 - You start with $20 and an empty garden: buy two carrots, grow and sell them, and that pays for your first
   Strawberry. Early crops fruit every few seconds (a Strawberry every 17, a Blueberry every 20).
-- A slow climb after that, paced by simulation (`test/economy.mjs`): an attentive player buys a Blueberry about
-  four minutes after the Strawberry, an Orange Tulip eight minutes later, and every seed after takes longer, about
-  ten hours to the Beanstalk (nearer twelve for someone who checks in every half minute). Prices run from $10 to
-  $540B. Carrots, Strawberries and Blueberries come ten or so to a restock; the rarer the seed, the more restocks
-  it misses.
+- A steady climb after that, paced by simulation (`test/economy.mjs`) of a player picking about three fruit a
+  second: a Blueberry about six minutes after the Strawberry, an Orange Tulip four minutes later, a Tomato six after
+  that, and each seed after takes a little longer, about seven hours to the Beanstalk. Prices run from $10 to $20T.
+  Carrots, Strawberries and Blueberries come ten or so to a restock; the rarer the seed, the more restocks it
+  misses.
 - Market Day every twelve minutes: the plaza puts up a maypole and bunting, two pop-up carts sell rarer seeds at a
   quarter off, and one crop you grow sells for triple. A chip under the top buttons counts down and takes you there.
 - Weather and time: a day/night cycle with stars and lanterns, rain, snow and thunderstorms. They mutate fruit:
@@ -53,7 +53,7 @@ Add it to your home screen for fullscreen. Progress saves on the device.
 ## Code map
 `src/voxel.js` voxel sets, the mesher (baked ambient occlusion), chunking, instanced batches ·
 `src/models.js` every crop, fruit, stall and character as voxels · `src/world.js` the map, third-person camera,
-movement and collisions, lighting, sky, weather, picking · `src/ui.js` HUD, joystick, Collect and Steal prompts,
+movement and collisions, lighting, sky, weather, picking · `src/ui.js` HUD, joystick, the Collect prompt,
 teleports, hotbar, shop sheets, tutorial · `src/island.js` the island's shape, cliffs and underside, the waterfall,
 islets, clouds and cloud sea · `src/state.js` save data
 and player actions · `src/sim.js` growth, weather, mutations, Market Day · `src/data.js` crop table, prices and
@@ -66,11 +66,12 @@ icons for the UI · `src/audio.js` WebAudio synth · `src/main.js` boot and loop
   walking with the thumbstick, the Collect prompt, tap and hold collecting, the teleport buttons, selling,
   buying, the shop prompt, stall collisions, keyboard, camera drag, the island's edge, shovel, Market Day, rain,
   save/reload) and checks every step.
-- `node test/economy.mjs [runs]` simulates attentive players from a fresh start (restocks, fruit sizes,
-  mutations, weather and Market Day, all rolled like the game) and prints when each seed first becomes
-  affordable. `--casual` plays like someone who does a round of the garden every half minute and the shops every
-  few. `node test/economy.mjs --tune [runs]` re-derives every price and sell value so the gaps between seeds match
-  its `TARGET` list.
+- `node test/economy.mjs [runs]` simulates players from a fresh start (restocks, fruit sizes, mutations, weather
+  and Market Day, all rolled like the game) and prints when each seed first becomes theirs. They pick about three
+  fruit a second, the best first (ripe fruit waits on the plant), and go to the seed shop once a minute.
+  `--attentive` picks everything the moment it ripens and shops the instant it can; `--casual` picks half as fast
+  and shops every few minutes. `node test/economy.mjs --tune [runs]` re-derives every price and sell value so the
+  gaps between seeds match its `TARGET` list.
 - `node test/plants.mjs [out.png] ["crops=apple,corn&stages=2,3,4,5"]` renders crops side by side, lit like the
   game, for working on the plant models.
 - `node test/gallery.mjs` screenshots a full garden by day, sunset, night, snow and storm.
