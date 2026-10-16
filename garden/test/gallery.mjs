@@ -1,92 +1,52 @@
-// Screenshots of many game states on several screen sizes, for eyeballing the art.
-import { chromium, devices } from 'playwright';
+// Screenshots of a full garden in several conditions.
 import fs from 'node:fs';
+import { execSync } from 'node:child_process';
+import { chromium, devices } from 'playwright';
 import { serve } from './serve.mjs';
-
-const out = process.env.SHOTS || 'test/shots';
-fs.mkdirSync(out, { recursive: true });
+const out = 'test/shots';
 const server = await serve();
-const url = `http://localhost:${server.address().port}/index.html`;
-const browser = await chromium.launch();
-const errors = [];
-const CROPS = ['carrot','strawberry','blueberry','tulip','tomato','corn','watermelon','pumpkin','apple','coconut','dragonfruit','mango','grape','mushroom','beanstalk'];
-
-async function open(name, device) {
-  const ctx = await browser.newContext(device);
-  const page = await ctx.newPage();
-  page.on('pageerror', (e) => errors.push(name + ' pageerror: ' + e.message));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(name + ' console: ' + m.text()); });
-  await page.goto(url);
-  await page.waitForFunction('window.game && window.game.L.W', null, { timeout: 15000 });
-  const box = await page.locator('#view').boundingBox();
-  const L = await page.evaluate(() => window.game.L);
-  const k = box.width / L.W;
-  return {
-    page, L, ctx,
-    tap: async (x, y) => { await page.mouse.click(box.x + x * k, box.y + y * k); await page.waitForTimeout(150); },
-    run: (fn, arg) => page.evaluate(fn, arg),
-    shot: async (n, wait = 300) => { await page.waitForTimeout(wait); await page.screenshot({ path: `${out}/${name}_${n}.png` }); console.log('shot', name, n); },
-  };
-}
-const tile = (L, i) => ({ x: L.gx + (i % 7) * 24 + 12, y: L.gy + Math.floor(i / 7) * 24 + 12 });
-
-// --- a mid-game garden on an iPhone 13
-{
-  const s = await open('mid', { ...devices['iPhone 13'], deviceScaleFactor: 3 });
-  await s.tap(s.L.W / 2, s.L.H / 2);
-  await s.run((crops) => {
-    const g = window.game.G;
-    g.tut = 9; g.rows = 5; g.money = 48210; g.cans = 7; g.spr = { sprinkler: 2, super: 1 };
-    g.seeds = { carrot: 6, strawberry: 3, blueberry: 2, tomato: 1, corn: 2, apple: 1 };
-    window.game.UI.toasts = [];
-  }, CROPS);
-  await s.run(() => window.game.save());
-  const plan = ['strawberry','strawberry','carrot','carrot','carrot','blueberry','tomato','corn','apple','carrot','carrot','strawberry','blueberry','corn'];
-  for (let i = 0; i < plan.length; i++) { await s.run((c) => { window.game.G.seeds[c] = (window.game.G.seeds[c] || 0) + 1; window.game.G.sel = 'seed:' + c; }, plan[i]); await s.tap(tile(s.L, i * 2 % 35).x, tile(s.L, i * 2 % 35).y); }
-  await s.run(() => { for (let i = 0; i < 90; i++) window.game.update(1); });
-  await s.run(() => { window.game.G.sel = 'spr:sprinkler'; });
-  await s.tap(tile(s.L, 15).x, tile(s.L, 15).y);
-  await s.run(() => { window.game.G.sel = 'can'; });
-  await s.tap(tile(s.L, 4).x, tile(s.L, 4).y);
-  await s.run(() => { const g = window.game.G; g.pets = [{ type: 'puppy' }, { type: 'kitten' }]; g.eggs = [{ id: 'rare', t: 50 }]; g.sel = 'seed:carrot'; window.game.UI.selT = 2; });
-  await s.shot('garden', 1200);
-  await s.tap(tile(s.L, 16).x, tile(s.L, 16).y);
-  await s.run(() => { window.game.G.sel = null; });
-  await s.tap(tile(s.L, 14).x, tile(s.L, 14).y);
-  await s.shot('info', 400);
-  await s.tap(s.L.W - 10, s.L.hudY + 6);
-  await s.shot('settings', 600);
-  await s.run(() => { window.game.UI.panel = null; window.game.G.sel = 'shovel'; });
-  await s.page.waitForTimeout(100);
-  await s.tap(tile(s.L, 16).x, tile(s.L, 16).y);
-  await s.shot('confirm', 400);
-  await s.run(() => { window.game.UI.confirm = null; window.game.G.time = 600 * 0.66; });
-  await s.shot('sunset', 1500);
-  await s.run(() => { window.game.G.time = 600 * 0.8; });
-  await s.shot('night', 1500);
-  await s.run(() => { window.game.G.time = 600 * 0.3; window.game.G.weather = { type: 'storm', left: 60 }; });
-  await s.page.waitForTimeout(3000);
-  await s.run(() => window.game.G.plots.forEach((p) => p && p.fr.forEach((f) => f && (f.p = 1))));
-  await s.page.waitForTimeout(6000);
-  await s.shot('storm', 0);
-  await s.run(() => { window.game.G.weather = { type: 'clear', left: 0 }; });
-  await s.page.waitForTimeout(500);
-  await s.tap(s.L.harvestBtn.x + 30, s.L.harvestBtn.y + 8);
-  await s.shot('harvest_all', 250);
-  await s.tap(s.L.bagBtn.x + 20, s.L.bagBtn.y + 8);
-  await s.shot('basket', 700);
-  await s.ctx.close();
-}
-// --- small phone and a desktop window
-for (const [name, dev] of [['se', { ...devices['iPhone SE'] }], ['desk', { viewport: { width: 1280, height: 800 } }], ['android', { ...devices['Pixel 7'] }]]) {
-  const s = await open(name, dev);
-  await s.tap(s.L.W / 2, s.L.H / 2);
-  await s.run(() => { const g = window.game.G; g.tut = 9; g.rows = 7; window.game.UI.toasts = []; g.pets = [{ type: 'bee' }, { type: 'dragon' }, { type: 'capybara' }]; });
-  for (let i = 0; i < 49; i++) { await s.run((c) => { window.game.G.seeds[c] = 1; window.game.G.sel = 'seed:' + c; }, CROPS[(i * 4) % 15]); await s.tap(tile(s.L, i).x, tile(s.L, i).y); }
-  await s.run(() => { for (let i = 0; i < 600; i++) window.game.update(1); window.game.UI.toasts = []; });
-  await s.shot('full', 1500);
-  await s.ctx.close();
-}
-console.log(errors.length ? errors.join('\n') : 'no errors');
-await browser.close();
-server.close();
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const ctx = await browser.newContext({ ...devices[process.env.DEVICE || 'iPhone 13'] });
+const p = await ctx.newPage();
+const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+const cache = '/tmp/claude-0/fontcache';
+await p.route(/fonts\.(googleapis|gstatic)\.com/, (r) => {
+  const url = r.request().url(), f = cache + '/' + Buffer.from(url).toString('base64url').slice(-120);
+  try { if (!fs.existsSync(f)) execSync(`curl -sS -A "Mozilla/5.0 Chrome/120" -o ${JSON.stringify(f)} ${JSON.stringify(url)}`); r.fulfill({ path: f, contentType: url.includes('css') ? 'text/css' : 'font/woff2', headers: { 'access-control-allow-origin': '*' } }); } catch { r.abort(); }
+});
+await p.goto(`http://localhost:${server.address().port}/index.html`);
+await p.evaluate(() => localStorage.clear()); await p.reload();
+await p.waitForFunction('window.game && document.querySelector("#title button")');
+await p.click('#title button', { force: true });
+await p.evaluate(() => {
+  const g = window.game.G;
+  g.tut = 6; g.money = 1234567;
+  const crops = ['apple', 'corn', 'tulip', 'tulip', 'strawberry', 'tomato', 'blueberry', 'carrot', 'carrot', 'carrot', 'pumpkin', 'watermelon', 'coconut', 'dragonfruit', 'mango', 'grape', 'mushroom', 'beanstalk', 'strawberry', 'tomato'];
+  const spots = [[-13, -14], [12, -16], [-22, -2], [-20, 2], [-6, -2], [10, -4], [20, 4], [0, 8], [3, 9], [-2, 10], [-13, 12], [12, 14], [-4, -18], [22, -6], [-17, -24], [3, -26], [6, 20], [-8, 21], [15, 21], [-20, 12]];
+  crops.forEach((c, i) => { g.seeds[c] = (g.seeds[c] || 0) + 1; });
+  return spots.map(([x, z], i) => [crops[i], x, z]);
+}).then(async (list) => {
+  for (const [c, x, z] of list) await p.evaluate(([c, x, z]) => { window.game.G.seeds[c] = 5; }, [c, x, z]);
+});
+await p.evaluate(async () => {
+  const st = await import('./src/state.js');
+  const crops = ['apple', 'corn', 'tulip', 'tulip', 'strawberry', 'tomato', 'blueberry', 'carrot', 'carrot', 'carrot', 'pumpkin', 'watermelon', 'coconut', 'dragonfruit', 'mango', 'grape', 'mushroom', 'beanstalk', 'strawberry', 'tomato'];
+  const spots = [[-13, -14], [12, -16], [-22, -2], [-20, 2], [-6, -2], [10, -4], [20, 4], [0, 8], [3, 9], [-2, 10], [-13, 12], [12, 14], [-4, -18], [22, -6], [-17, -24], [3, -26], [6, 20], [-8, 21], [15, 21], [-20, 12]];
+  crops.forEach((c, i) => st.plant(c, spots[i][0], spots[i][1]));
+  for (let i = 0; i < 700; i++) window.game.sim(1);
+  window.game.G.plants.forEach((pl, i) => pl.fr.forEach((f, k) => { if (f && k === 0 && i % 3 === 0) f.m = [['gold', 'rainbow', 'frozen', 'shocked', 'wet', 'moonlit'][i % 6]]; }));
+  window.game.G.time = 600 * 0.3; window.game.G.weather = { type: 'clear', left: 0 };
+  document.querySelectorAll('.toast').forEach((t) => t.remove());
+});
+const shot = async (n, wait = 1500) => { await p.waitForTimeout(wait); await p.screenshot({ path: `${out}/g_${n}.png` }); console.log('shot', n); };
+await shot('day', 2500);
+await p.evaluate(() => { window.game.G.time = 600 * 0.66; });
+await shot('sunset', 3000);
+await p.evaluate(() => { window.game.G.time = 600 * 0.82; });
+await shot('night', 4000);
+await p.evaluate(() => { window.game.G.time = 600 * 0.3; window.game.G.weather = { type: 'snow', left: 200 }; });
+await shot('snow', 8000);
+await p.evaluate(() => { window.game.G.weather = { type: 'storm', left: 200 }; });
+await shot('storm', 8000);
+console.log(errs.join('\n') || 'no errors');
+await browser.close(); server.close();

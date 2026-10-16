@@ -1,769 +1,466 @@
-// HUD, hotbar, shop panels, dialogs, toasts, tutorial, and all touch input.
-import { canvas, painter, mix, darken, lighten, clamp, lerp, ease, fmt, fmtTime, fmtKg, ditherRect, INK, hsl } from './util.js';
-import { text, textWidth, wrap, TINY, MAIN, bigText } from './font.js';
-import * as A from './art.js';
-import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, SPRINKLERS, EXPANSIONS, basketPrice, CAN_PRICE, CAN_USES, EGGS, EGG, PETS, MAX_PETS, WEATHER, COLS, ROWS, mutMult } from './data.js';
-import { G, on, emit, plant, harvest, harvestAll, sell, buySeed, buyGear, buyEgg, releasePet, water, dig, placeSprinkler,
-  inStock, restockIn, period, capacity, unlocked, ripeCount, totalRipe, bagValue, itemKey, expandPrice, petBonus, sprinklerAt, reset, save } from './state.js';
-import { L, W8, tileAt, tileRect, anchorOf, stallAt, walkTo, float, burst, refreshGround, petScreenPos } from './scene.js';
-import { speed, isNight, bloodMoon, dayFrac } from './sim.js';
+// DOM UI (HUD, hotbar, shop sheets, toasts), touch input on the 3D view, and the in-world tutorial.
+import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, inBed } from './data.js';
+import { G, on, emit, plant, harvest, harvestAll, sell, buySeed, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, itemKey, placeBlock, reset, save } from './state.js';
+import { speed, isNight, bloodMoon } from './sim.js';
+import * as Wd from './world.js';
+import { ICON } from './icons.js';
 import { sfx, initAudio, setSound, setMusic } from './audio.js';
 
-export const UI = { title: true, panel: null, confirm: null, info: null, toasts: [], shown: 0, hotScroll: 0, selT: 0, flashHot: 0 };
-let hits = [];
-const ptr = { down: false, x: 0, y: 0 };
-const PAPER = '#f7e8c6', PAPER2 = '#efdcb2', LINE = '#d4b47c', BROWN = '#3a2421', MUTED = '#8a6448';
-const WD = A.PAL.wood;
+const $ = (s, r = document) => r.querySelector(s);
+const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+export function fmt(n) {
+  n = Math.floor(n);
+  if (n < 100000) return n.toLocaleString('en-US');
+  const u = ['K', 'M', 'B', 'T', 'Qd']; let i = -1;
+  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+  return (n < 10 ? (Math.floor(n * 100) / 100).toFixed(2) : n < 100 ? (Math.floor(n * 10) / 10).toFixed(1) : Math.floor(n)) + u[i];
+}
+export function fmtTime(s) { s = Math.max(0, Math.ceil(s)); return s >= 3600 ? Math.floor(s / 3600) + 'h ' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + 'm' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
-// ---------------------------------------------------------------- primitives
-function hit(x, y, w, h, fn, o = {}) { const r = { x, y, w, h, fn, ...o }; hits.push(r); return r; }
-const inside = (r, x, y) => x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h &&
-  (!r.clip || (x >= r.clip.x && x < r.clip.x + r.clip.w && y >= r.clip.y && y < r.clip.y + r.clip.h));
-const pressed = (id) => ptr.down && ptr.hit && ptr.hit.id === id && !ptr.moved && inside(ptr.hit, ptr.x, ptr.y);
+const SVG = {
+  gear: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 0h2v2h1V1h1v1h1v1H8v1h2v2H8v1h1v1H8v1H7V8H6v2H4V8H3v1H2V8H1V7h1V6H0V4h2V3H1V2h1V1h1v1h1z"/><path fill="#3a3a5a" d="M4 4h2v2H4z"/></svg>',
+  basket: '<svg viewBox="0 0 12 10" shape-rendering="crispEdges"><path fill="#f04a5a" d="M2 1h3v3H2z"/><path fill="#ffd84e" d="M5 0h3v3H5z"/><path fill="#5cc060" d="M8 1h2v3H8z"/><path fill="#1a1a2e" d="M0 4h12v1H0z"/><path fill="#c8904a" d="M1 5h10v4H1z"/><path fill="#a8703a" d="M2 6h1v1H2zm2 0h1v1H4zm2 0h1v1H6zm2 0h1v1H8zM3 7h1v1H3zm2 0h1v1H5zm2 0h1v1H7zm2 0h1v1H9z"/><path fill="#1a1a2e" d="M1 9h10v1H1z"/></svg>',
+  shovel: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#a8744b" d="M8 0h2v1H9v1H8v1H7v1H6v1H5V4h1V3h1V2h1z"/><path fill="#c8c6d8" d="M3 4h2v1h1v2H5v1H4v1H2V8H1V6h1V5h1z"/><path fill="#8a88a0" d="M2 8h2v1H2zM5 6h1v1H5z"/></svg>',
+  hand: '<svg viewBox="0 0 11 13" shape-rendering="crispEdges"><path fill="#1a1a2e" d="M3 0h2v1h1v4h4v1h1v5h-1v1H9v1H3v-1H2v-1H1V9H0V7h1V6h2z"/><path fill="#fff6e6" d="M4 1h1v5h1V5h1v1h1V6h1v1h1v4H9v1H4v-1H3v-1H2V9H1V8h1V7h1V6h1z"/><path fill="#ffd8b8" d="M4 10h5v1H4z"/></svg>',
+};
+const WICON = {
+  clear: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#ffb43a" d="M4 0h1v1H4zM4 8h1v1H4zM0 4h1v1H0zM8 4h1v1H8z"/><path fill="#ffd84e" d="M2 2h5v5H2z"/><path fill="#fff4a0" d="M2 2h3v1H2z"/></svg>',
+  rain: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#e8f0ff" d="M2 1h4v1h1v1h1v2H1V3h1z"/><path fill="#6cb6ff" d="M2 6h1v1H2zM5 7h1v1H5zM7 6h1v1H7z"/></svg>',
+  storm: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#9a9ab4" d="M2 1h4v1h1v1h1v2H1V3h1z"/><path fill="#ffe14a" d="M4 5h2v1H5v1H4v1H3V7h1V6h0z"/></svg>',
+  snow: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#e8f6ff" d="M4 0h1v9H4zM0 4h9v1H0zM1 1h1v1H1zM7 1h1v1H7zM1 7h1v1H1zM7 7h1v1H7zM2 2h1v1H2zM6 2h1v1H6zM2 6h1v1H2zM6 6h1v1H6z"/></svg>',
+  night: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#f2f0dc" d="M3 0h3v1H4v1H3v5h1v1h2v1H3V8H2V7H1V2h1V1h1z"/></svg>',
+  blood: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#ff4a5a" d="M3 0h3v1H4v1H3v5h1v1h2v1H3V8H2V7H1V2h1V1h1z"/></svg>',
+};
 
-function box(g, x, y, w, h, fill, edge = INK) {
-  g.fillStyle = edge;
-  g.fillRect(x + 1, y, w - 2, h); g.fillRect(x, y + 1, w, h - 2);
-  g.fillStyle = fill;
-  g.fillRect(x + 1, y + 1, w - 2, h - 2);
-}
-function woodPanel(g, x, y, w, h) {
-  box(g, x, y, w, h, WD[3]);
-  g.fillStyle = WD[5]; g.fillRect(x + 2, y + 1, w - 4, 1);
-  g.fillStyle = WD[4]; g.fillRect(x + 1, y + 2, 1, h - 4);
-  g.fillStyle = WD[1]; g.fillRect(x + 2, y + h - 2, w - 4, 1); g.fillRect(x + w - 2, y + 2, 1, h - 4);
-  for (let yy = y + 6; yy < y + h - 4; yy += 7) { g.fillStyle = WD[2]; g.fillRect(x + 3, yy, w - 6, 1); }
-}
-function paper(g, x, y, w, h) {
-  box(g, x, y, w, h, PAPER, WD[1]);
-  g.fillStyle = '#fff3d8'; g.fillRect(x + 1, y + 1, w - 2, 1);
-  g.fillStyle = PAPER2; g.fillRect(x + 1, y + h - 2, w - 2, 1);
-}
-// 3D button. Returns true if drawn pressed.
-function button(g, id, x, y, w, h, col, label, fn, o = {}) {
-  const dis = o.disabled;
-  const r = hit(x, y, w, h, fn, { id, ...o });
-  const p = pressed(id);
-  const c = dis ? '#a8a0a0' : col;
-  const dy = p ? 1 : 0;
-  g.fillStyle = INK;
-  g.fillRect(x + 1, y + dy, w - 2, h - dy); g.fillRect(x, y + 1 + dy, w, h - 2 - dy);
-  g.fillStyle = darken(c, 0.35); g.fillRect(x + 1, y + 1 + dy, w - 2, h - 2 - dy);
-  g.fillStyle = c; g.fillRect(x + 1, y + 1 + dy, w - 2, h - 4 + (p ? 1 : 0) - dy);
-  g.fillStyle = lighten(c, 0.35); g.fillRect(x + 2, y + 1 + dy, w - 4, 1);
-  let lx = x + w / 2;
-  if (o.icon) {
-    const iw = o.icon.width, tw = label ? textWidth(label) + 2 : 0;
-    const ix = Math.round(x + (w - iw - tw) / 2);
-    g.drawImage(o.icon, ix, Math.round(y + (h - 2 - o.icon.height) / 2) + dy);
-    lx = ix + iw + 2 + tw / 2;
-  }
-  if (label) text(g, label, lx, y + Math.floor((h - 9) / 2) + dy, dis ? '#e8e0e0' : '#fff6dc', { align: 'center', outline: darken(c, 0.55) });
-  return r;
-}
-function closeBtn(g, x, y, fn) {
-  const p = pressed('close');
-  hit(x - 2, y - 2, 17, 17, fn, { id: 'close' });
-  box(g, x, y + (p ? 1 : 0), 13, 13, '#d9534f');
-  g.fillStyle = '#ff8a7a'; g.fillRect(x + 2, y + 1 + (p ? 1 : 0), 9, 1);
-  const P = painter({ g }), oy = y + (p ? 1 : 0);
-  P.line(x + 4, oy + 4, x + 8, oy + 8, '#fff6dc'); P.line(x + 8, oy + 4, x + 4, oy + 8, '#fff6dc');
-  P.line(x + 5, oy + 4, x + 9, oy + 8, '#fff6dc'); P.line(x + 9, oy + 4, x + 5, oy + 8, '#fff6dc');
-}
-const priceLabel = (n) => '$' + fmt(n);
+let ui = {};
+const P = { down: false, pts: new Map(), mode: null, last: null, stall: null, moved: false, pinch: null };
 
-// ---------------------------------------------------------------- toasts & dialogs
-export function toast(str, col = '#fff6dc') {
-  if (UI.toasts.some((t) => t.str === str && t.t < 1)) return;
-  UI.toasts.push({ str, col, t: 0, life: 2.8 });
-  if (UI.toasts.length > 3) UI.toasts.shift();
+// ---------------------------------------------------------------- build
+export function build(app) {
+  app.insertAdjacentHTML('beforeend', `
+    <div id="hud">
+      <div class="pill blk" id="moneyPill"><i class="coin"></i><span id="money">0</span></div>
+      <div class="spacer"></div>
+      <button class="pill blk" id="weather"></button>
+      <button class="blk" id="settings" aria-label="Settings">${SVG.gear}</button>
+    </div>
+    <div id="goal" class="blk" hidden><img alt=""><span class="txt"></span><span class="n"></span><div class="bar"><i></i></div></div>
+    <button class="blk" id="basket" aria-label="Basket">${SVG.basket}<span id="bagN">0</span></button>
+    <div id="side"><button class="blk" id="harvest" aria-label="Harvest all">${SVG.basket}<span class="badge" id="ripeN" hidden>0</span></button></div>
+    <div id="tray" class="blk"><div id="hotbar"></div></div>
+    <div id="info" class="blk" hidden><div class="t"></div><div class="pb"><i></i></div><div class="s"></div></div>
+    <div id="toasts"></div>
+    <div id="fx"></div>
+    <div id="hand" hidden>${SVG.hand}</div>
+    <div id="shade"></div>
+    <section class="sheet blk" id="sheet"><header><h2></h2><span class="sub"></span><button class="x blk" aria-label="Close">X</button></header><div class="list"></div><footer hidden></footer></section>
+  `);
+  ui = { money: $('#money'), weather: $('#weather'), hotbar: $('#hotbar'), harvest: $('#harvest'), ripeN: $('#ripeN'), basket: $('#basket'), bagN: $('#bagN'), info: $('#info'), toasts: $('#toasts'), fx: $('#fx'), hand: $('#hand'), goal: $('#goal'), shade: $('#shade'), sheet: $('#sheet') };
+  ui.shown = G.money;
+  $('#settings').onclick = () => openSheet('settings');
+  ui.weather.onclick = () => toast(G.weather.type !== 'clear' ? WEATHER[G.weather.type].msg : isNight() ? 'Moonlight can make ripe fruit Moonlit (x2).' : 'The weather changes every few minutes.');
+  ui.harvest.onclick = () => {
+    if (!totalRipe()) { toast('Nothing is ripe yet. Ripe fruit sparkles!'); sfx('error'); return; }
+    harvestAll();
+  };
+  ui.basket.onclick = () => openSheet('sell');
+  ui.shade.onclick = closeSheet;
+  $('.x', ui.sheet).onclick = closeSheet;
+  ui.hotbar.addEventListener('click', (e) => {
+    const s = e.target.closest('.slot');
+    if (!s) return;
+    G.sel = G.sel === s.dataset.id ? null : s.dataset.id;
+    sfx('tap'); renderHotbar();
+  });
+  renderHotbar();
+  const gl = $('#gl');
+  gl.addEventListener('pointerdown', down);
+  gl.addEventListener('pointermove', move);
+  gl.addEventListener('pointerup', up);
+  gl.addEventListener('pointercancel', up);
+  gl.addEventListener('wheel', (e) => { e.preventDefault(); Wd.zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY); }, { passive: false });
 }
-function confirm(msg, yes, fn, col = '#5fbf4a') { UI.confirm = { msg, yes, fn, col, t: 0 }; sfx('open'); }
 
-// ---------------------------------------------------------------- selection / hotbar items
+export function showTitle(app, start) {
+  const t = h('div', '', `<h1>Grow a<em>Garden</em></h1><button class="blk">${G.stats.planted ? 'Play' : 'Start'}</button>`);
+  t.id = 'title';
+  app.appendChild(t);
+  $('button', t).onclick = () => { initAudio(); setSound(G.sound); setMusic(G.music); sfx('open'); t.remove(); start(); };
+}
+
+// ---------------------------------------------------------------- hotbar
 function hotItems() {
-  const out = [];
-  for (const c of CROPS) if (G.seeds[c.id] > 0) out.push({ id: 'seed:' + c.id, icon: A.packet(c.id), n: G.seeds[c.id], name: c.name + ' Seed', hint: 'Tap soil to plant' });
-  if (G.cans > 0) out.push({ id: 'can', icon: A.toolIcon('can'), n: G.cans, name: 'Watering Can', hint: 'Tap a plant: 2x growth' });
-  for (const k in SPRINKLERS) if (G.spr[k] > 0) out.push({ id: 'spr:' + k, icon: A.sprinklerIcon(k), n: G.spr[k], name: SPRINKLERS[k].name, hint: 'Tap a tile to place' });
-  out.push({ id: 'shovel', icon: A.toolIcon('shovel'), n: 0, name: 'Shovel', hint: 'Tap a plant to remove it' });
+  const out = CROPS.filter((c) => G.seeds[c.id] > 0).map((c) => ({ id: 'seed:' + c.id, img: ICON[c.id], n: G.seeds[c.id], rc: RARITIES[c.rarity].col }));
+  out.push({ id: 'shovel', svg: SVG.shovel });
   return out;
 }
-export function select(id) {
-  G.sel = id;
-  UI.selT = 2.2;
-  sfx('tap');
-}
-function ensureSelection() {
-  if (!G.sel) return;
+let hotKey = '';
+export function renderHotbar() {
+  if (G.sel && G.sel !== 'shovel' && !(G.seeds[G.sel.slice(5)] > 0)) G.sel = null;
   const items = hotItems();
-  if (items.some((it) => it.id === G.sel)) return;
-  const seed = items.find((it) => it.id.startsWith('seed:'));
-  G.sel = seed ? seed.id : null;
+  const k = items.map((i) => i.id + i.n).join() + G.sel;
+  if (k === hotKey) return;
+  hotKey = k;
+  ui.hotbar.innerHTML = '';
+  for (const it of items) {
+    const b = h('button', 'slot blk' + (G.sel === it.id ? ' sel' : ''));
+    b.dataset.id = it.id;
+    b.innerHTML = (it.rc ? `<i class="band" style="--rc:${it.rc}"></i>` : '') + (it.img ? `<img src="${it.img}" alt="">` : it.svg) + (it.n ? `<span class="n">${it.n}</span>` : '');
+    ui.hotbar.appendChild(b);
+  }
+}
+const selCrop = () => (G.sel && G.sel.startsWith('seed:') ? G.sel.slice(5) : null);
+function nextSeed(after) {
+  if (G.seeds[after] > 0) return;
+  const n = CROPS.find((c) => G.seeds[c.id] > 0);
+  G.sel = n ? 'seed:' + n.id : null;
+  if (!n && G.tut >= 6) toast('Out of seeds! Get more at the SEEDS stall.');
 }
 
-// ---------------------------------------------------------------- garden actions (tap + drag)
-const CHEAP = 1000;
-function plantSel(i) {
-  let crop = G.sel && G.sel.startsWith('seed:') ? G.sel.slice(5) : null;
-  if (!crop) return false;
-  if (!(G.seeds[crop] > 0)) return false;
-  const ok = plant(i, crop);
-  if (ok && !(G.seeds[crop] > 0)) {
-    const next = hotItems().find((it) => it.id.startsWith('seed:'));
-    if (next) { G.sel = next.id; UI.selT = 2.2; toast(`Out of ${CROP[crop].name} seeds. Switched to ${CROP[next.id.slice(5)].name}.`); }
-    else { G.sel = null; toast('Out of seeds! Buy more at the SEEDS stand.'); }
+// ---------------------------------------------------------------- touch input on the world
+function down(e) {
+  e.preventDefault();
+  try { e.target.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  P.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (P.pts.size === 2) {
+    const [a, b] = [...P.pts.values()];
+    P.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    P.mode = null; Wd.setGhost(null);
+    return;
   }
-  return ok;
-}
-function applyMode(mode, i) {
-  if (i < 0 || !unlocked(i)) return;
-  const pl = G.plots[i];
-  if (mode === 'harvest' && ripeCount(pl)) harvest(i);
-  else if (mode === 'plant' && !pl) plantSel(i);
-  else if (mode === 'dig' && pl && CROP[pl.c].price < CHEAP) dig(i);
-  else if (mode === 'water' && pl && G.cans > 0) water(i);
-}
-function gardenStart(i) {
-  if (i < 0) return null;
-  const row = Math.floor(i / COLS);
-  if (!unlocked(i)) {
-    if (row === G.rows) askExpand();
-    else toast('Expand your garden to unlock this land.');
-    return null;
+  if (P.pts.size > 2) return;
+  const x = e.clientX, y = e.clientY;
+  P.down = true; P.moved = false; P.sx = x; P.sy = y; P.mode = null; P.stall = null; P.last = null;
+  ui.info.hidden = true; ui.infoPl = null;
+  const pl = Wd.pickPlant(x, y);
+  if (pl && ripeCount(pl)) { P.mode = 'harvest'; harvest(pl); return; }
+  const crop = selCrop();
+  const gp = Wd.screenToGround(x, y);
+  if (G.sel === 'shovel' && pl) {
+    if (CROP[pl.c].price >= 1000) dialog(`Dig up this ${CROP[pl.c].name}? It will be gone for good.`, 'Dig up', () => dig(pl), 'var(--red)');
+    else { dig(pl); P.mode = 'dig'; }
+    return;
   }
-  const pl = G.plots[i], sel = G.sel || '';
-  const a = anchorOf(i);
-  walkTo(a.x + 8, a.y + 3);
-  UI.info = null;
-  if (pl && ripeCount(pl)) { harvest(i); return 'harvest'; }
-  if (sel.startsWith('seed:') && !pl) { plantSel(i); return 'plant'; }
-  if (sel === 'shovel') {
-    if (pl) {
-      if (CROP[pl.c].price >= CHEAP) { confirm(`Dig up this ${CROP[pl.c].name}? It will be gone for good.`, 'Dig up', () => dig(i), '#d9534f'); return null; }
-      dig(i); return 'dig';
+  if (crop && gp && inBed(gp.x, gp.z, 0) && !pl) { P.mode = 'plant'; tryPlant(crop, gp); return; }
+  if (pl) { showInfo(pl); sfx('tap'); return; }
+  const st = Wd.pickStall(x, y);
+  if (st) { P.stall = st; return; }
+  if (gp) {
+    Wd.walkTo(gp.x, gp.z);
+    if (inBed(gp.x, gp.z) && !crop) { if (G.sel === 'shovel') return; toast(Object.keys(G.seeds).length ? 'Pick a seed below, then tap the soil.' : 'No seeds! Get some at the SEEDS stall.'); pulseHotbar(); }
+  }
+}
+function tryPlant(crop, gp) {
+  const x = Math.round(gp.x), z = Math.round(gp.z);
+  const why = placeBlock(crop, x, z);
+  Wd.setGhost(x, z, !why);
+  if (why) { if (!P.last && why === 'crowded') { toast('Too close to another plant.'); sfx('error'); } return; }
+  const pl = plant(crop, x, z);
+  if (pl) { P.last = pl; Wd.walkTo(x + 2, z - 3); if (G.tut < 1) pl.boost = true; nextSeed(crop); renderHotbar(); }
+}
+function move(e) {
+  if (!P.pts.has(e.pointerId)) return;
+  const prev = P.pts.get(e.pointerId);
+  P.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (P.pinch && P.pts.size === 2) {
+    const [a, b] = [...P.pts.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    Wd.zoomBy(d / P.pinch.d, mx, my);
+    Wd.panPixels(mx - P.pinch.mx, my - P.pinch.my);
+    P.pinch = { d, mx, my };
+    return;
+  }
+  if (!P.down) return;
+  const x = e.clientX, y = e.clientY;
+  if (Math.hypot(x - P.sx, y - P.sy) > 8) P.moved = true;
+  if (P.mode === 'plant') {
+    const crop = selCrop();
+    const gp = Wd.screenToGround(x, y);
+    if (crop && gp && inBed(gp.x, gp.z)) tryPlant(crop, gp); else Wd.setGhost(null);
+  } else if (P.mode === 'harvest' || P.mode === 'dig') {
+    const steps = Math.max(1, Math.ceil(Math.hypot(x - prev.x, y - prev.y) / 10));
+    for (let s = 1; s <= steps; s++) {
+      const pl = Wd.pickPlant(prev.x + ((x - prev.x) * s) / steps, prev.y + ((y - prev.y) * s) / steps);
+      if (!pl) continue;
+      if (P.mode === 'harvest' && ripeCount(pl)) harvest(pl);
+      if (P.mode === 'dig' && CROP[pl.c].price < 1000) dig(pl);
     }
-    if (G.placed.some((s) => s.i === i)) { dig(i); return null; }
-    toast('Nothing to dig here.');
-    return null;
+  } else if (!P.mode && P.moved && G.tut >= 6) {
+    Wd.panPixels(x - prev.x, y - prev.y);
   }
-  if (sel === 'can') {
-    if (pl) { water(i); return 'water'; }
-    toast('Tap a plant to water it.');
-    return null;
-  }
-  if (sel.startsWith('spr:')) { placeSprinkler(i, sel.slice(4)); ensureSelection(); return null; }
-  if (pl) { UI.info = { i, t: 3.5 }; sfx('tap'); return null; }
-  if (!hotItems().some((it) => it.id.startsWith('seed:'))) toast('No seeds left. Buy some at the SEEDS stand!');
-  else { toast('Pick a seed from your hotbar first!'); UI.flashHot = 1; }
-  return null;
 }
-function askExpand() {
-  if (G.rows >= ROWS) return;
-  const p = expandPrice();
-  confirm(`Expand your garden by one row of ${COLS} plots for ${priceLabel(p)}?`, 'Expand', () => buyGear('expand'));
+function up(e) {
+  P.pts.delete(e.pointerId);
+  if (P.pts.size < 2) P.pinch = null;
+  if (!P.down || P.pts.size) return;
+  P.down = false;
+  Wd.setGhost(null);
+  if (P.stall && !P.moved && Wd.pickStall(e.clientX, e.clientY) === P.stall) openSheet(P.stall);
+  P.mode = null;
 }
+function pulseHotbar() { ui.hotbar.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(0)' }], { duration: 300 }); }
 
-// ---------------------------------------------------------------- panels
-const KIND_STALL = { seeds: 'seeds', sell: 'sell', gear: 'gear', eggs: 'eggs' };
-export function openPanel(kind, tab = 0) {
-  UI.panel = { kind, scroll: 0, vel: 0, max: 0, anim: 0, tab, closing: false };
-  UI.info = null;
-  sfx('open');
-  const s = L.stalls[KIND_STALL[kind]];
-  if (s) walkTo(s.x + s.w / 2, L.townY + 61);
-}
-function closePanel() { if (UI.panel) { UI.panel.closing = true; sfx('close'); } }
-
-function panelGeom() {
-  const x = 5, w = L.W - 10, top = Math.max(L.hudY + 17, L.insetT + 4), bottom = L.H - L.insetB - 5;
-  return { x, w, top, h: bottom - top };
-}
-
-function drawPanel(g) {
-  const P = UI.panel;
-  const e = ease(P.anim);
-  g.fillStyle = `rgba(20,12,24,${(0.55 * e).toFixed(3)})`; g.fillRect(0, 0, L.W, L.H);
-  hit(0, 0, L.W, L.H, closePanel, { id: 'dim' });
-  const geo = panelGeom();
-  const oy = Math.round((1 - e) * (L.H - geo.top + 10));
-  const x = geo.x, y = geo.top + oy, w = geo.w, h = geo.h;
-  hit(x, y, w, h, () => {}, { id: 'panelbg' });
-  woodPanel(g, x, y, w, h);
-  // title ribbon
-  const titles = { seeds: 'Seed Shop', sell: 'Sell Stand', gear: 'Gear Shop', eggs: 'Pet Eggs', settings: 'Settings' };
-  const tcol = { seeds: '#4fae5a', sell: '#f0a830', gear: '#d9534f', eggs: '#9b6bd6', settings: '#7a8aa8' }[P.kind];
-  const title = titles[P.kind], tw = textWidth(title) + 18;
-  const tx = Math.round(x + w / 2 - tw / 2);
-  box(g, tx, y + 3, tw, 13, tcol);
-  g.fillStyle = lighten(tcol, 0.35); g.fillRect(tx + 2, y + 4, tw - 4, 1);
-  g.fillStyle = darken(tcol, 0.3); g.fillRect(tx + 1, y + 14, tw - 2, 1);
-  text(g, title, x + w / 2, y + 5, '#fff6dc', { align: 'center', outline: darken(tcol, 0.55) });
-  closeBtn(g, x + w - 17, y + 3, closePanel);
-  // content area
-  const cx = x + 4, cy = y + 19, cw = w - 8;
-  let ch = h - 23;
-  const footer = { sell: 26 }[P.kind] || 0;
-  let head = 0;
-  if (P.kind === 'seeds') head = 13;
-  if (P.kind === 'eggs') head = 17;
-  paper(g, cx, cy, cw, ch);
-  if (head) drawHead(g, P, cx, cy, cw);
-  const list = { x: cx + 1, y: cy + head + 1, w: cw - 2, h: ch - head - footer - 2 };
-  P.list = list;
-  hit(list.x, list.y, list.w, list.h, () => {}, { id: 'list', scroll: P });
-  g.save();
-  g.beginPath(); g.rect(list.x, list.y, list.w, list.h); g.clip();
-  const total = ({ seeds: listSeeds, sell: listSell, gear: listGear, eggs: P.tab ? listPets : listEggs, settings: listSettings })[P.kind](g, list.x, list.y - Math.round(P.scroll), list.w, list);
-  g.restore();
-  P.max = Math.max(0, total - list.h);
-  // scroll bar
-  if (P.max > 0) {
-    const bh = Math.max(10, (list.h * list.h) / total), by = list.y + (P.scroll / P.max) * (list.h - bh);
-    g.fillStyle = LINE; g.fillRect(list.x + list.w - 3, list.y + 1, 2, list.h - 2);
-    g.fillStyle = WD[2]; g.fillRect(list.x + list.w - 3, Math.round(by), 2, Math.round(bh));
-  }
-  if (footer) drawFooter(g, P, cx, cy + ch - footer, cw, footer);
-  if (P.closing) return;
-}
-function drawHead(g, P, x, y, w) {
-  if (P.kind === 'seeds') {
-    g.fillStyle = PAPER2; g.fillRect(x + 1, y + 1, w - 2, 12);
-    g.drawImage(A.sproutIcon(), x + 4, y + 3);
-    text(g, 'New seeds in ' + fmtTime(restockIn()), x + 14, y + 3, MUTED);
-    text(g, priceLabel(G.money), x + w - 4, y + 3, '#3a7a2a', { align: 'right' });
-  }
-  if (P.kind === 'eggs') {
-    const tabs = ['Eggs', `My Pets ${G.pets.length}/${MAX_PETS}`];
-    const tw = Math.floor((w - 6) / 2);
-    tabs.forEach((t, k) => {
-      const sel = P.tab === k;
-      button(g, 'tab' + k, x + 3 + k * (tw + 1), y + 2, tw, 14, sel ? '#9b6bd6' : '#c8b0a0', t, () => { P.tab = k; P.scroll = 0; sfx('tap'); });
-    });
-  }
-}
-function drawFooter(g, P, x, y, w, h) {
-  g.fillStyle = PAPER2; g.fillRect(x + 1, y, w - 2, h - 1);
-  g.fillStyle = LINE; g.fillRect(x + 1, y, w - 2, 1);
-  const v = bagValue();
-  button(g, 'sellall', x + 4, y + 4, w - 8, h - 7, '#f0a830', G.bag.length ? 'Sell All  ' + priceLabel(v) : 'Basket is empty', () => {
-    if (!G.bag.length) return;
-    sell();
-    if (G.tut === 4) G.tut = 5;
-  }, { disabled: !G.bag.length, icon: A.coinIcon() });
-}
-function rowBg(g, x, y, w, h, k) { if (k % 2) { g.fillStyle = '#f2dfb6'; g.fillRect(x, y, w, h); } g.fillStyle = '#ead3a4'; g.fillRect(x + 3, y + h - 1, w - 6, 1); }
-
-function listSeeds(g, x, y, w, clip) {
-  const RH = 30;
-  CROPS.forEach((c, k) => {
-    const ry = y + k * RH;
-    if (ry > clip.y + clip.h || ry + RH < clip.y) return;
-    rowBg(g, x, ry, w, RH, k);
-    const n = inStock(c.id), rar = RARITIES[c.rarity];
-    g.drawImage(A.packet(c.id), x + 3, ry + 6);
-    text(g, c.name, x + 21, ry + 4, BROWN);
-    const rc = rar.rainbow ? hsl(W8.t * 120, 70, 45) : rar.dark;
-    const rw = text(g, rar.name.toUpperCase(), x + 21, ry + 15, rc, { font: TINY });
-    const have = G.seeds[c.id] || 0;
-    text(g, n ? `x${n} IN STOCK` : 'NONE TODAY', x + 25 + rw, ry + 15, n ? '#3a7a2a' : '#b08870', { font: TINY });
-    if (have) text(g, `HAVE ${have}`, x + 21, ry + 22, MUTED, { font: TINY });
-    const can = n > 0 && G.money >= c.price;
-    button(g, 'seed' + c.id, x + w - 52, ry + 7, 48, 16, n > 0 ? '#5fbf4a' : '#a8a0a0', n > 0 ? priceLabel(c.price) : 'SOLD OUT',
-      () => { if (buySeed(c.id)) { onBought(c.id, x + w - 28, ry + 7); } }, { clip, repeat: true, disabled: !can });
-  });
-  return CROPS.length * RH;
-}
-function onBought(id, x, y) {
-  float('+1', x, y, '#a8ff8a');
-  if (!G.sel || !G.sel.startsWith('seed:')) G.sel = 'seed:' + id;
-  if (G.tut === 5) G.tut = 6;
-}
-function gearRows() {
-  const rows = [];
-  rows.push({ id: 'can', icon: A.toolIcon('can'), name: 'Watering Can', desc: `${CAN_USES} uses. Watered plants grow 2x for a minute.`, price: CAN_PRICE, own: G.cans ? `HAVE ${G.cans} USES` : '' });
-  for (const k in SPRINKLERS) rows.push({ id: k, icon: A.sprinklerIcon(k), name: SPRINKLERS[k].name, desc: SPRINKLERS[k].desc, price: SPRINKLERS[k].price, own: G.spr[k] ? `HAVE ${G.spr[k]}` : '' });
-  rows.push({ id: 'basket', icon: A.toolIcon('basket'), name: 'Bigger Basket', desc: `Carry 100 more fruit (now ${capacity()}).`, price: basketPrice(G.basket) });
-  if (G.rows < ROWS) rows.push({ id: 'expand', icon: A.toolIcon('expand'), name: 'Garden Expansion', desc: `Unlock ${COLS} more plots of land.`, price: expandPrice(), confirm: true });
-  return rows;
-}
-function listGear(g, x, y, w, clip) {
-  let yy = y;
-  gearRows().forEach((r, k) => {
-    const lines = wrap(r.desc, w - 80);
-    const RH = Math.max(32, 16 + lines.length * 9 + (r.own ? 6 : 0));
-    rowBg(g, x, yy, w, RH, k);
-    g.drawImage(r.icon, x + 3 + Math.round((15 - r.icon.width) / 2), yy + Math.round((RH - r.icon.height) / 2));
-    text(g, r.name, x + 21, yy + 4, BROWN);
-    lines.forEach((ln, j) => text(g, ln, x + 21, yy + 14 + j * 9, MUTED));
-    if (r.own) text(g, r.own, x + 21, yy + 15 + lines.length * 9, '#3a7a2a', { font: TINY });
-    button(g, 'gear' + r.id, x + w - 52, yy + Math.round((RH - 16) / 2), 48, 16, '#5fbf4a', priceLabel(r.price), () => {
-      if (r.confirm) { if (G.money < r.price) { emit('broke'); return; } closePanel(); askExpand(); return; }
-      if (buyGear(r.id)) { float('Bought!', x + w - 28, yy + 4, '#a8ff8a'); ensureSelection(); if (!G.sel || G.sel === 'shovel') G.sel = r.id === 'can' ? 'can' : SPRINKLERS[r.id] ? 'spr:' + r.id : G.sel; }
-    }, { clip, disabled: G.money < r.price, repeat: !r.confirm && r.id !== 'basket' });
-    yy += RH;
-  });
-  return yy - y;
-}
-function listEggs(g, x, y, w, clip) {
-  const RH = 38;
-  EGGS.forEach((e, k) => {
-    const ry = y + k * RH;
-    rowBg(g, x, ry, w, RH, k);
-    const img = A.eggSprite(e.id);
-    g.drawImage(img, x + 5, ry + 13 + (Math.sin(W8.t * 3 + k) > 0.8 ? -1 : 0));
-    text(g, e.name, x + 19, ry + 4, BROWN);
-    text(g, 'Hatches in ' + fmtTime(e.hatch), x + 19, ry + 14, MUTED);
-    e.pets.forEach(([p], j) => g.drawImage(A.petFrames(p).right[0], x + 17 + j * 15, ry + 23));
-    button(g, 'egg' + e.id, x + w - 52, ry + 11, 48, 16, '#9b6bd6', priceLabel(e.price), () => {
-      if (buyEgg(e.id)) { float('Egg in the nest!', x + w / 2, ry + 6, '#e8c8ff'); closePanel(); }
-    }, { clip, disabled: G.money < e.price });
-  });
-  return EGGS.length * RH;
-}
-function listPets(g, x, y, w, clip) {
-  if (!G.pets.length) {
-    const lines = wrap('No pets yet. Buy an egg and it will hatch in your nest. Pets roam your garden and help out!', w - 16);
-    lines.forEach((ln, j) => text(g, ln, x + w / 2, y + 10 + j * 10, MUTED, { align: 'center' }));
-    return 20 + lines.length * 10;
-  }
-  const RH = 34;
-  G.pets.forEach((p, k) => {
-    const d = PETS[p.type], ry = y + k * RH;
-    rowBg(g, x, ry, w, RH, k);
-    g.drawImage(A.petFrames(p.type).right[Math.floor(W8.t * 3) % 2], x + 3, ry + 10);
-    text(g, d.name, x + 21, ry + 4, BROWN);
-    text(g, RARITIES[d.rarity].name.toUpperCase(), x + 25 + textWidth(d.name), ry + 6, RARITIES[d.rarity].dark, { font: TINY });
-    wrap(d.desc, w - 80).forEach((ln, j) => text(g, ln, x + 21, ry + 14 + j * 9, MUTED));
-    button(g, 'rel' + k, x + w - 52, ry + 9, 48, 16, '#d9534f', 'Release', () => confirm(`Release your ${d.name}? It will leave your garden.`, 'Release', () => releasePet(k), '#d9534f'), { clip });
-  });
-  return G.pets.length * RH;
-}
-function groups() {
-  const m = new Map();
-  for (const it of G.bag) {
-    const k = itemKey(it);
-    let gr = m.get(k);
-    if (!gr) m.set(k, (gr = { key: k, c: it.c, m: it.m, n: 0, v: 0, kg: 0 }));
-    gr.n++; gr.v += it.v; gr.kg = Math.max(gr.kg, it.kg);
-  }
-  return [...m.values()].sort((a, b) => b.v - a.v);
-}
-function mutName(m) { return MUT_ORDER.filter((k) => m.includes(k)).map((k) => MUTS[k].name).join(' '); }
-function listSell(g, x, y, w, clip) {
-  const gs = groups();
-  text(g, `Basket ${G.bag.length}/${capacity()}`, x + 5, y + 4, MUTED);
-  const bonus = petBonus('sell');
-  if (bonus) text(g, `Pet bonus +${Math.round(bonus * 100)}%`, x + w - 5, y + 4, '#3a7a2a', { align: 'right' });
-  if (!gs.length) {
-    wrap('Your basket is empty. Tap ripe crops in your garden to harvest them, then sell them here!', w - 16).forEach((ln, j) => text(g, ln, x + w / 2, y + 22 + j * 10, MUTED, { align: 'center' }));
-    return 60;
-  }
-  const RH = 26, y0 = y + 14;
-  gs.forEach((gr, k) => {
-    const ry = y0 + k * RH;
-    if (ry > clip.y + clip.h || ry + RH < clip.y) return;
-    rowBg(g, x, ry, w, RH, k);
-    const icon = A.mutated(A.cropIcon(gr.c), A.mainLook(gr.m), Math.floor(W8.t * 8));
-    g.drawImage(icon, x + 3 + Math.round((15 - icon.width) / 2), ry + Math.round((RH - icon.height) / 2));
-    const mn = mutName(gr.m);
-    text(g, CROP[gr.c].name + (gr.n > 1 ? ` x${gr.n}` : ''), x + 21, ry + 3, BROWN);
-    if (mn) {
-      let mx = x + 21;
-      MUT_ORDER.filter((kk) => gr.m.includes(kk)).forEach((kk) => { mx += text(g, MUTS[kk].name.toUpperCase(), mx, ry + 14, darken(MUTS[kk].col, 0.35), { font: TINY }) + 4; });
-    } else text(g, 'BEST ' + fmtKg(gr.kg), x + 21, ry + 14, MUTED, { font: TINY });
-    button(g, 'sg' + gr.key, x + w - 52, ry + 5, 48, 16, '#f0a830', priceLabel(gr.v * (1 + bonus)), () => { sell(gr.key); if (G.tut === 4) G.tut = 5; }, { clip });
-  });
-  return 14 + gs.length * RH;
-}
-function listSettings(g, x, y, w, clip) {
-  let yy = y + 4;
-  const row = (label, on, fn, id) => {
-    text(g, label, x + 8, yy + 4, BROWN);
-    button(g, id, x + w - 52, yy, 48, 16, on ? '#5fbf4a' : '#a8a0a0', on ? 'ON' : 'OFF', fn, { clip });
-    yy += 22;
-  };
-  row('Sound effects', G.sound, () => { G.sound = !G.sound; setSound(G.sound); sfx('tap'); }, 'snd');
-  row('Music', G.music, () => { G.music = !G.music; setMusic(G.music); sfx('tap'); }, 'mus');
-  yy += 2;
-  text(g, 'How to play', x + 8, yy, BROWN); yy += 11;
-  const help = '1. Pick a seed in the hotbar and tap or drag across soil to plant.\n2. Crops grow on their own, even while you are away.\n3. Tap ripe crops, or press Harvest All.\n4. Sell at the SELL stand, then buy better seeds.\nRain, snow, storms, the moon and your pets can mutate fruit to be worth far more.';
-  wrap(help, w - 16).forEach((ln) => { text(g, ln, x + 8, yy, MUTED); yy += 10; });
-  yy += 4;
-  text(g, 'Stats', x + 8, yy, BROWN); yy += 11;
-  for (const [k, v] of [['Planted', fmt(G.stats.planted)], ['Harvested', fmt(G.stats.harvested)], ['Earned', priceLabel(G.stats.earned)], ['Best fruit', priceLabel(G.stats.best)]]) {
-    text(g, k, x + 8, yy, MUTED); text(g, v, x + w - 8, yy, BROWN, { align: 'right' }); yy += 10;
-  }
-  yy += 6;
-  button(g, 'reset', x + 8, yy, w - 16, 16, '#d9534f', 'Start a new garden', () => confirm('Erase this garden and start over? This cannot be undone.', 'Erase', () => { reset(); refreshGround(); UI.panel = null; UI.title = true; }, '#d9534f'), { clip });
-  yy += 24;
-  return yy - y;
-}
-
-// ---------------------------------------------------------------- HUD + bar
-function drawHud(g) {
-  const y = L.hudY;
-  // money
-  const s = fmt(UI.shown);
-  const tw = textWidth(s);
-  const bump = W8.moneyBump > 0 ? -1 : 0;
-  box(g, 3, y, tw + 18, 13, '#3a2a30');
-  g.fillStyle = '#5a4450'; g.fillRect(4, y + 1, tw + 16, 1);
-  g.drawImage(A.coinIcon(), 5, y + 2 + bump);
-  text(g, s, 15, y + 3 + bump, W8.moneyBump > 0 ? '#fff6a0' : '#ffe14a', { outline: '#26162b' });
-  L.moneyPos = { x: 9, y: y + 6 };
-  // weather / time chip
-  const wt = G.weather.type;
-  let icon, label;
-  if (wt !== 'clear') { icon = A.weatherIcon(wt); label = fmtTime(G.weather.left); }
-  else if (isNight()) { icon = A.weatherIcon(bloodMoon() ? 'blood' : 'night'); label = bloodMoon() ? 'Blood Moon' : 'Night'; }
-  else { icon = A.weatherIcon('clear'); label = 'Sunny'; }
-  const cw = textWidth(label) + icon.width + 9;
-  const gx = L.W - 17;
-  const cx = gx - 3 - cw;
-  box(g, cx, y, cw, 13, '#2a3048');
-  g.fillStyle = '#3e4868'; g.fillRect(cx + 1, y + 1, cw - 2, 1);
-  g.drawImage(icon, cx + 3, y + Math.round((13 - icon.height) / 2));
-  text(g, label, cx + icon.width + 5, y + 3, '#e8f0ff', { outline: '#141828' });
-  hit(cx, y, cw, 13, () => toast(wt !== 'clear' ? WEATHER[wt].msg : isNight() ? 'At night, fruit can become Moonlit (x2).' : 'Clear skies. Weather changes every few minutes.'), { id: 'wchip' });
-  // settings
-  const p = pressed('set');
-  hit(gx - 1, y - 1, 16, 15, () => openPanel('settings'), { id: 'set' });
-  box(g, gx, y + (p ? 1 : 0), 13, 13, '#5a6680');
-  g.drawImage(A.toolIcon('gear'), gx + 1, y + 1 + (p ? 1 : 0));
-  // seed restock timer on the stall
-  const st = L.stalls.seeds, rl = fmtTime(restockIn()), rw = textWidth(rl, TINY) + 4;
-  const rx = Math.round(st.x + st.w / 2 - rw / 2), ry = st.y + 22;
-  box(g, rx, ry, rw, 7, '#2a3a2a');
-  text(g, rl, rx + 2, ry + 1, '#c8f0a0', { font: TINY });
-}
-
-function drawBar(g) {
-  const y = L.barY, W = L.W;
-  // wooden shelf
-  g.fillStyle = INK; g.fillRect(0, y, W, L.H - y);
-  g.fillStyle = WD[2]; g.fillRect(0, y + 1, W, L.H - y - 1);
-  g.fillStyle = WD[4]; g.fillRect(0, y + 1, W, 1);
-  g.fillStyle = WD[3]; g.fillRect(0, y + 2, W, 1);
-  for (let yy = y + 9; yy < L.H; yy += 8) { g.fillStyle = WD[1]; g.fillRect(0, yy, W, 1); }
-  for (let xx = 30; xx < W; xx += 61) { g.fillStyle = WD[1]; g.fillRect(xx, y + 3, 1, L.H - y); }
-  // hotbar
-  const items = hotItems();
-  const SW = 22, GAP = 2, hx = 4, hw = W - 8;
-  const total = items.length * (SW + GAP) - GAP;
-  const maxScroll = Math.max(0, total - hw);
-  UI.hotScroll = clamp(UI.hotScroll, 0, maxScroll);
-  const clip = { x: hx, y: L.hotY - 3, w: hw, h: SW + 4 };
-  const hb = hit(clip.x, clip.y, clip.w, clip.h, () => {}, { id: 'hotbar', hscroll: true, max: maxScroll });
-  g.save(); g.beginPath(); g.rect(clip.x, clip.y, clip.w, clip.h); g.clip();
-  const fl = UI.flashHot > 0 && Math.sin(W8.t * 20) > 0;
-  items.forEach((it, k) => {
-    const sx = Math.round(hx + k * (SW + GAP) - UI.hotScroll), sel = G.sel === it.id;
-    const sy = L.hotY - (sel ? 2 : 0);
-    hit(sx, sy, SW, SW + (sel ? 2 : 0), () => { if (G.sel === it.id) { G.sel = null; sfx('tap'); } else select(it.id); }, { id: 'slot' + it.id, clip, inH: true });
-    box(g, sx, sy, SW, SW, sel ? '#ffe9a8' : fl && it.id.startsWith('seed:') ? '#ffffff' : PAPER, sel ? '#c88a1a' : INK);
-    if (sel) { g.fillStyle = '#ffd23f'; g.fillRect(sx + 1, sy + 1, SW - 2, 1); g.fillRect(sx + 1, sy + SW - 2, SW - 2, 1); g.fillRect(sx + 1, sy + 1, 1, SW - 2); g.fillRect(sx + SW - 2, sy + 1, 1, SW - 2); }
-    else { g.fillStyle = PAPER2; g.fillRect(sx + 1, sy + SW - 2, SW - 2, 1); }
-    g.drawImage(it.icon, sx + Math.round((SW - it.icon.width) / 2), sy + Math.round((SW - it.icon.height) / 2) - (it.n ? 1 : 0));
-    if (it.n) text(g, String(it.n > 999 ? '999+' : it.n), sx + SW - 2, sy + SW - 7, '#fff6dc', { font: TINY, align: 'right', outline: INK });
-  });
-  g.restore();
-  if (maxScroll > 0) {
-    if (UI.hotScroll < maxScroll) { g.fillStyle = '#fff6dc'; g.fillRect(W - 3, L.hotY + 8, 1, 5); g.fillRect(W - 2, L.hotY + 9, 1, 3); }
-    if (UI.hotScroll > 0) { g.fillStyle = '#fff6dc'; g.fillRect(2, L.hotY + 8, 1, 5); g.fillRect(1, L.hotY + 9, 1, 3); }
-  }
-  // basket + harvest all
-  const full = G.bag.length >= capacity();
-  const bb = L.bagBtn, bump = W8.bagBump > 0 ? -1 : 0;
-  button(g, 'bag', bb.x, bb.y + bump, bb.w, bb.h, full ? '#d9534f' : '#c8904a', `${G.bag.length}/${capacity()}`, () => openPanel('sell'), { icon: A.toolIcon('basket') });
-  const n = totalRipe(), hb2 = L.harvestBtn;
-  button(g, 'hall', hb2.x, hb2.y, hb2.w, hb2.h, '#5fbf4a', n ? `Harvest All (${n})` : 'Harvest All', () => {
-    if (!n) { toast('Nothing is ripe yet. Ripe fruit sparkles!'); sfx('error'); return; }
-    harvestAll();
-    walkTo(L.W / 2, L.gBottom - 2);
-  }, { disabled: !n });
-  if (n && Math.sin(W8.t * 4) > 0.6) { g.drawImage(A.sparkle(1), hb2.x + hb2.w - 7, hb2.y - 2); }
-  // selected item label
-  if (UI.selT > 0 && G.sel && !UI.panel) {
-    const it = items.find((i) => i.id === G.sel);
-    if (it) {
-      const label = `${it.name}: ${it.hint}`;
-      const tw = Math.min(textWidth(label) + 10, W - 8);
-      const lx = Math.round(W / 2 - tw / 2), ly = L.barY - 15;
-      g.globalAlpha = Math.min(1, UI.selT * 3);
-      box(g, lx, ly, tw, 13, '#2a2030');
-      text(g, label, W / 2, ly + 3, '#fff6dc', { align: 'center' });
-      g.globalAlpha = 1;
-    }
-  }
-}
-
-function drawInfo(g) {
-  const inf = UI.info;
-  const pl = G.plots[inf.i];
-  if (!pl) { UI.info = null; return; }
-  const c = CROP[pl.c], a = anchorOf(inf.i), sp = speed(inf.i);
-  const lines = [];
+// ---------------------------------------------------------------- plant info bubble
+function showInfo(pl) { ui.infoPl = pl; ui.infoT = 3.5; ui.info.hidden = false; updateInfo(); }
+function updateInfo() {
+  const pl = ui.infoPl;
+  if (!pl || !G.plants.includes(pl) || ui.infoT <= 0) { ui.info.hidden = true; ui.infoPl = null; return; }
+  const c = CROP[pl.c], sp = speed(pl);
   let prog, label;
-  if (!c.multi || pl.g < c.grow) {
-    prog = c.multi ? pl.g / c.grow : pl.fr[0].p;
-    label = prog >= 1 ? 'Ready to harvest!' : 'Ready in ' + fmtTime((c.grow - pl.g) / sp);
-  } else {
-    const ripe = ripeCount(pl), growing = pl.fr.filter((f) => f && f.p < 1);
-    const next = growing.length ? Math.min(...growing.map((f) => ((1 - f.p) * c.regrow) / sp)) : null;
+  if (!c.multi || pl.g < c.grow) { prog = Wd.growth(pl); label = prog >= 1 ? 'Ready!' : 'Ready in ' + fmtTime((c.grow - pl.g) / sp); }
+  else {
+    const ripe = ripeCount(pl), grow = pl.fr.filter((f) => f && f.p < 1);
     prog = pl.fr.reduce((s, f) => s + (f ? f.p : 0), 0) / c.n;
-    label = ripe ? `${ripe}/${c.n} ripe` : next != null ? 'Fruit in ' + fmtTime(next) : 'Flowering...';
+    label = ripe ? `${ripe} of ${c.n} ripe` : grow.length ? 'Fruit in ' + fmtTime(Math.min(...grow.map((f) => ((1 - f.p) * c.regrow) / sp))) : 'Flowering';
   }
-  const boosts = [];
-  if (pl.w > 0) boosts.push('Watered');
-  if (sprinklerAt(inf.i)) boosts.push('Sprinkler');
-  if (G.weather.type === 'rain' || G.weather.type === 'storm') boosts.push('Rain');
-  const bw = Math.max(textWidth(c.name), textWidth(label), boosts.length ? textWidth(boosts.join(' ')) : 0, 60) + 10;
-  const bh = 30 + (boosts.length ? 9 : 0);
-  const x = clamp(Math.round(a.x - bw / 2), 3, L.W - bw - 3);
-  const y = Math.max(L.hudY + 16, a.y - 40 - bh);
-  g.globalAlpha = Math.min(1, inf.t * 4);
-  box(g, x, y, bw, bh, '#2a2030');
-  g.fillStyle = '#2a2030'; g.fillRect(clamp(a.x, x + 4, x + bw - 6) - 1, y + bh, 3, 1); g.fillRect(clamp(a.x, x + 4, x + bw - 6), y + bh + 1, 1, 1);
-  text(g, c.name, x + 5, y + 3, RARITIES[c.rarity].col);
-  g.fillStyle = '#1a1420'; g.fillRect(x + 5, y + 13, bw - 10, 4);
-  g.fillStyle = prog >= 1 ? '#ffd23f' : '#5fbf4a'; g.fillRect(x + 5, y + 13, Math.round((bw - 10) * clamp(prog, 0, 1)), 4);
-  g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(x + 5, y + 13, Math.round((bw - 10) * clamp(prog, 0, 1)), 1);
-  text(g, label, x + 5, y + 20, '#fff6dc');
-  if (boosts.length) text(g, boosts.join(' '), x + 5, y + 29, '#8fd8ff');
-  g.globalAlpha = 1;
+  $('.t', ui.info).textContent = c.name;
+  $('.t', ui.info).style.color = RARITIES[c.rarity].col;
+  $('.pb i', ui.info).style.width = Math.round(Math.min(1, prog) * 100) + '%';
+  $('.s', ui.info).textContent = label;
+  const p = Wd.plantScreen(pl, 1);
+  ui.info.style.left = Math.max(84, Math.min(innerWidth - 84, p.x)) + 'px';
+  ui.info.style.top = Math.max(100, p.y - 14) + 'px';
 }
 
-function drawToasts(g) {
-  let y = L.hudY + 17;
-  for (const t of UI.toasts) {
-    const lines = wrap(t.str, L.W - 30);
-    const tw = Math.max(...lines.map((l) => textWidth(l))) + 12, th = lines.length * 10 + 5;
-    const u = t.t / t.life;
-    const slide = t.t < 0.15 ? Math.round((1 - t.t / 0.15) * -6) : 0;
-    g.globalAlpha = u > 0.85 ? 1 - (u - 0.85) / 0.15 : 1;
-    const x = Math.round(L.W / 2 - tw / 2);
-    box(g, x, y + slide, tw, th, '#2a2030');
-    g.fillStyle = '#3e3448'; g.fillRect(x + 1, y + slide + 1, tw - 2, 1);
-    lines.forEach((ln, k) => text(g, ln, L.W / 2, y + slide + 3 + k * 10, t.col, { align: 'center' }));
-    g.globalAlpha = 1;
-    y += th + 2;
+// ---------------------------------------------------------------- sheets
+let sheetKind = null, sheetTimer = 0;
+export function openSheet(kind) {
+  sheetKind = kind;
+  ui.shade.classList.add('on'); ui.sheet.classList.add('open');
+  renderSheet();
+  sfx('open');
+  if (kind === 'seeds' || kind === 'sell') Wd.walkTo(kind === 'seeds' ? -15 : 15, -34);
+}
+function closeSheet() { if (!sheetKind) return; sheetKind = null; ui.shade.classList.remove('on'); ui.sheet.classList.remove('open'); sfx('close'); }
+function renderSheet() {
+  const s = ui.sheet, list = $('.list', s), foot = $('footer', s);
+  const keepScroll = list.scrollTop;
+  list.innerHTML = ''; foot.hidden = true; foot.innerHTML = '';
+  if (sheetKind === 'seeds') {
+    $('h2', s).textContent = 'Seeds'; $('.sub', s).textContent = 'Restock ' + fmtTime(restockIn());
+    for (const c of CROPS) {
+      const n = inStock(c.id), r = RARITIES[c.rarity], can = n > 0 && G.money >= c.price;
+      const row = h('div', 'row blk', `<img src="${ICON[c.id]}" alt=""><div class="meta"><div class="name">${c.name}</div><div class="tag"><span style="color:${r.col};-webkit-text-stroke:0.6px #3a3a5a">${r.name}</span><span style="color:${n ? '#3a9a4a' : '#b08870'}">${n ? 'x' + n + ' in stock' : 'Sold out'}</span></div></div>`);
+      const b = h('button', 'buy blk' + (can ? '' : ' no'), n ? '$' + fmt(c.price) : 'Sold out');
+      b.dataset.id = 'buy-' + c.id;
+      b.onclick = () => { if (buySeed(c.id)) { floatAt('+1', b.getBoundingClientRect()); if (!G.sel || G.sel === 'shovel') G.sel = 'seed:' + c.id; renderHotbar(); renderSheet(); } };
+      holdRepeat(b);
+      row.appendChild(b); list.appendChild(row);
+    }
+  } else if (sheetKind === 'sell') {
+    $('h2', s).textContent = 'Sell'; $('.sub', s).textContent = `Basket ${G.bag.length}/${BASKET}`;
+    const groups = new Map();
+    for (const it of G.bag) { const k = itemKey(it); const g = groups.get(k) || { k, c: it.c, m: it.m, n: 0, v: 0 }; g.n++; g.v += it.v; groups.set(k, g); }
+    const gs = [...groups.values()].sort((a, b) => b.v - a.v);
+    if (!gs.length) list.appendChild(h('div', 'empty-note', 'Your basket is empty.<br>Tap ripe crops to pick them.'));
+    for (const g of gs) {
+      const muts = MUT_ORDER.filter((m) => g.m.includes(m));
+      const row = h('div', 'row blk', `<img src="${ICON[g.c]}" alt=""><div class="meta"><div class="name">${CROP[g.c].name}${g.n > 1 ? ' x' + g.n : ''}</div><div class="tag">${muts.length ? muts.map((m) => `<span style="color:${MUTS[m].col};-webkit-text-stroke:0.6px #3a3a5a">${MUTS[m].name}</span>`).join('') : '<span style="color:#8a86a0">Fresh</span>'}</div></div>`);
+      const b = h('button', 'buy sell blk', '$' + fmt(g.v));
+      b.onclick = () => { sell(g.k); renderSheet(); };
+      row.appendChild(b); list.appendChild(row);
+    }
+    foot.hidden = false;
+    const all = h('button', 'big blk', G.bag.length ? `<i class="coin"></i>Sell all $${fmt(bagValue())}` : 'Nothing to sell');
+    all.id = 'sellAll';
+    all.disabled = !G.bag.length;
+    all.onclick = () => { sell(); renderSheet(); };
+    foot.appendChild(all);
+  } else if (sheetKind === 'settings') {
+    $('h2', s).textContent = 'Settings'; $('.sub', s).textContent = '';
+    const tog = (label, key, fn) => { const r = h('div', 'setrow', `<span>${label}</span>`); const b = h('button', 'buy blk' + (G[key] ? '' : ' no'), G[key] ? 'On' : 'Off'); b.onclick = () => { G[key] = !G[key]; fn(G[key]); sfx('tap'); renderSheet(); }; r.appendChild(b); list.appendChild(r); };
+    tog('Sound', 'sound', setSound); tog('Music', 'music', setMusic);
+    list.appendChild(h('div', 'stats', `<span>Planted</span><b>${fmt(G.stats.planted)}</b><span>Harvested</span><b>${fmt(G.stats.harvested)}</b><span>Earned</span><b>$${fmt(G.stats.earned)}</b><span>Best fruit</span><b>$${fmt(G.stats.best)}</b>`));
+    const r = h('button', 'big red blk', 'New garden');
+    r.onclick = () => dialog('Erase this garden and start over?', 'Erase', () => { reset(); closeSheet(); renderHotbar(); }, 'var(--red)');
+    list.appendChild(r);
   }
+  list.scrollTop = keepScroll;
+}
+function holdRepeat(b) {
+  let t = null;
+  const stop = () => { clearTimeout(t); clearInterval(t); t = null; };
+  b.addEventListener('pointerdown', () => { stop(); t = setTimeout(() => { t = setInterval(() => b.click(), 110); }, 450); });
+  b.addEventListener('pointerup', stop); b.addEventListener('pointerleave', stop); b.addEventListener('pointercancel', stop);
+}
+function dialog(msg, yes, fn, col) {
+  const d = h('div', '', `<div class="box blk"><div>${msg}</div><div class="btns"><button class="blk" style="--c:#9a96a8">Cancel</button><button class="blk" style="--c:${col}">${yes}</button></div></div>`);
+  d.id = 'dialog'; document.body.querySelector('#app').appendChild(d);
+  const [no, ok] = d.querySelectorAll('button');
+  no.onclick = () => d.remove(); ok.onclick = () => { d.remove(); fn(); };
+  sfx('open');
 }
 
-function drawConfirm(g) {
-  const c = UI.confirm;
-  g.fillStyle = 'rgba(20,12,24,0.5)'; g.fillRect(0, 0, L.W, L.H);
-  hit(0, 0, L.W, L.H, () => { UI.confirm = null; sfx('close'); }, { id: 'cdim' });
-  const w = Math.min(L.W - 20, 170), lines = wrap(c.msg, w - 16), h = 34 + lines.length * 10;
-  const x = Math.round(L.W / 2 - w / 2), y = Math.round(L.H / 2 - h / 2) - 20;
-  hit(x, y, w, h, () => {}, { id: 'cbox' });
-  woodPanel(g, x, y, w, h);
-  paper(g, x + 3, y + 3, w - 6, h - 6);
-  lines.forEach((ln, k) => text(g, ln, L.W / 2, y + 8 + k * 10, BROWN, { align: 'center' }));
-  const bw = Math.floor((w - 18) / 2);
-  button(g, 'cno', x + 6, y + h - 22, bw, 16, '#a8a0a0', 'Cancel', () => { UI.confirm = null; sfx('close'); });
-  button(g, 'cyes', x + w - 6 - bw, y + h - 22, bw, 16, c.col, c.yes, () => { UI.confirm = null; c.fn(); });
+// ---------------------------------------------------------------- toasts & effects
+export function toast(str) {
+  if ([...ui.toasts.children].some((c) => c.textContent === str)) return;
+  const t = h('div', 'toast blk'); t.textContent = str;
+  ui.toasts.appendChild(t);
+  while (ui.toasts.children.length > 3) ui.toasts.firstChild.remove();
+  setTimeout(() => t.remove(), 2900);
 }
+function floatText(str, x, y, col = '#fff', big = false) {
+  const f = h('div', 'float' + (big ? ' big' : '')); f.textContent = str; f.style.color = col; f.style.left = x + 'px'; f.style.top = y + 'px';
+  ui.fx.appendChild(f); setTimeout(() => f.remove(), 1300);
+}
+const floatAt = (str, r) => floatText(str, r.left + r.width / 2, r.top, '#a8ff8a');
+function flyIcon(src, from, to, delay, done) {
+  const i = h('img', 'fly'); i.src = src; ui.fx.appendChild(i);
+  const mx = (from.x + to.x) / 2, my = Math.min(from.y, to.y) - 80;
+  const a = i.animate([{ transform: `translate(${from.x}px,${from.y}px) scale(0.6)` }, { transform: `translate(${mx}px,${my}px) scale(1.25)`, offset: 0.45 }, { transform: `translate(${to.x}px,${to.y}px) scale(0.7)` }], { duration: 650, delay, easing: 'cubic-bezier(.4,0,.6,1)', fill: 'both' });
+  a.onfinish = () => { i.remove(); done && done(); };
+}
+const center = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+const bump = (el) => { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
 
 // ---------------------------------------------------------------- tutorial
-const TUT = [
-  'Tap the soil to plant a Carrot seed!',
-  'Plant the rest! Tip: drag across the soil to plant fast.',
-  'Your crops are growing. Ripe crops sparkle!',
-  'Tap a ripe crop to harvest it, or press Harvest All.',
-  'Tap the SELL stand to sell your harvest.',
-  'Now tap the SEEDS stand to buy more seeds!',
+// Tiny objective chip + world arrow, glowing trail and a pointing hand. No dialogue.
+const STEPS = [
+  { text: 'Plant', icon: 'carrot', target: 5, count: () => Math.min(5, G.stats.planted) },
+  { text: 'Growing', icon: 'carrot', bar: true },
+  { text: 'Harvest', icon: 'carrot', target: 5, count: () => Math.min(5, G.stats.harvested) },
+  { text: 'Sell', icon: 'carrot' },
+  { text: 'Buy seeds', icon: 'strawberry' },
 ];
-function tutorialStep() {
-  if (G.tut === 0 && G.stats.planted > 0) G.tut = 1;
-  if (G.tut === 1 && !Object.keys(G.seeds).length) G.tut = 2;
-  if (G.tut <= 2 && totalRipe() > 0 && G.stats.planted > 0) G.tut = 3;
-  if (G.tut === 3 && G.bag.length > 0) G.tut = 4;
-  if (G.tut === 4 && G.stats.earned > 0) G.tut = 5;
-  if (G.tut === 5 && G.stats.earned > 0 && CROPS.some((c) => G.bought.c[c.id])) G.tut = 6;
-  if (G.tut === 6) { G.tut = 7; toast("You're a natural! Keep growing your garden.", '#a8ff8a'); }
-}
-function drawTutorial(g) {
-  if (G.tut >= 6 || UI.panel || UI.confirm) return;
-  const msg = TUT[G.tut];
-  const lines = wrap(msg, L.W - 34);
-  const h = lines.length * 10 + 6, w = Math.max(...lines.map((l) => textWidth(l))) + 14;
-  const x = Math.round(L.W / 2 - w / 2), y = L.barY - h - (UI.selT > 0 ? 18 : 4);
-  box(g, x, y, w, h, '#fff6dc', INK);
-  g.fillStyle = '#ffd23f'; g.fillRect(x + 1, y + 1, 2, h - 2);
-  lines.forEach((ln, k) => text(g, ln, x + w / 2 + 1, y + 4 + k * 10, BROWN, { align: 'center' }));
-  // pointing hand
-  let target = null;
-  if (G.tut === 0) { const i = G.plots.findIndex((p, k) => !p && unlocked(k)); if (i >= 0) { const a = anchorOf(i); target = { x: a.x, y: a.y - 4 }; } }
-  if (G.tut === 3) { const i = G.plots.findIndex((p) => ripeCount(p)); if (i >= 0) { const a = anchorOf(i); target = { x: a.x, y: a.y - 6 }; } }
-  if (G.tut === 4) { const s = L.stalls.sell; target = { x: s.x + 22, y: s.y + 30 }; }
-  if (G.tut === 5) { const s = L.stalls.seeds; target = { x: s.x + 22, y: s.y + 30 }; }
-  if (target) {
-    const b = Math.round(Math.abs(Math.sin(W8.t * 4)) * 3);
-    g.drawImage(A.pointerSprite(), target.x - 4, target.y + 2 + b);
+let lastStep = -1, rewardT = 0;
+function tutorial(dt) {
+  if (G.tut >= 6 || document.getElementById('title')) { if (!ui.goal.hidden) ui.goal.hidden = true; ui.hand.hidden = true; Wd.setGuide(null); return; }
+  // advance
+  if (G.tut === 0 && (G.stats.planted >= 5 || (!Object.keys(G.seeds).length && G.plants.length))) G.tut = 1;
+  if (G.tut === 1 && totalRipe() > 0) G.tut = 2;
+  if (G.tut === 2 && (G.stats.harvested >= 5 || (G.bag.length && !G.plants.length))) G.tut = 3;
+  if (G.tut === 3 && G.stats.earned > 0) G.tut = 4;
+  if (G.tut === 4 && CROPS.some((c) => G.bought.c[c.id])) { G.tut = 5; rewardT = 2.4; G.seeds.strawberry = (G.seeds.strawberry || 0) + 2; renderHotbar(); celebrate('Garden unlocked!'); closeSheet(); }
+  if (G.tut === 5) { if ((rewardT -= dt) <= 0) { G.tut = 6; toast('You got 2 Strawberry seeds. Have fun!'); } return; }
+  const st = STEPS[G.tut];
+  if (G.tut !== lastStep) {
+    if (lastStep >= 0) celebrate();
+    lastStep = G.tut;
+    ui.goal.hidden = false;
+    ui.goal.classList.remove('pop', 'done'); void ui.goal.offsetWidth; ui.goal.classList.add('pop');
+    $('img', ui.goal).src = ICON[st.icon];
+    $('.txt', ui.goal).textContent = st.text;
   }
-}
-
-// ---------------------------------------------------------------- title
-function drawTitle(g) {
-  g.fillStyle = 'rgba(20,12,24,0.35)'; g.fillRect(0, 0, L.W, L.H);
-  const t1 = bigText('Grow a', '#fff6a0', '#ffc93a'), t2 = bigText('Garden', '#bff07a', '#4fae5a');
-  const cy = Math.round(L.townY + 30);
-  const b1 = Math.round(Math.sin(W8.t * 2) * 2), b2 = Math.round(Math.sin(W8.t * 2 + 0.6) * 2);
-  g.drawImage(t1, Math.round(L.W / 2 - t1.width / 2), cy + b1);
-  g.drawImage(t2, Math.round(L.W / 2 - t2.width / 2), cy + 20 + b2);
-  const fr = ['carrot', 'strawberry', 'apple', 'corn', 'watermelon', 'grape'];
-  fr.forEach((c, k) => {
-    const ic = A.cropIcon(c), a = (k / fr.length) * Math.PI * 2 + W8.t * 0.4;
-    g.drawImage(ic, Math.round(L.W / 2 + Math.cos(a) * 62 - ic.width / 2), Math.round(cy + 22 + Math.sin(a) * 34 - ic.height / 2));
-  });
-  text(g, 'pocket edition', L.W / 2, cy + 46, '#c8f0a0', { align: 'center', outline: INK });
-  if (Math.sin(W8.t * 4) > -0.3) text(g, G.stats.planted ? 'Tap to continue' : 'Tap to start', L.W / 2, L.barY - 28, '#fff6dc', { align: 'center', outline: INK, thick: true });
-  hit(0, 0, L.W, L.H, () => { UI.title = false; initAudio(); setSound(G.sound); setMusic(G.music); sfx('open'); }, { id: 'title' });
-}
-
-// ---------------------------------------------------------------- frame
-let lastNight = null, lastPeriod = null, bagFullT = 0, rescueT = 3;
-export function updateUI(dt) {
-  UI.shown = Math.abs(G.money - UI.shown) < 1 ? G.money : lerp(UI.shown, G.money, 1 - Math.exp(-dt * 8));
-  if (G.money < UI.shown && G.money < UI.shown - 1) UI.shown = G.money;
-  W8.moneyBump = Math.max(0, (W8.moneyBump || 0) - dt);
-  W8.bagBump = Math.max(0, (W8.bagBump || 0) - dt);
-  UI.selT = Math.max(0, UI.selT - dt);
-  UI.flashHot = Math.max(0, UI.flashHot - dt);
-  bagFullT = Math.max(0, bagFullT - dt);
-  if (!UI.title) for (const t of UI.toasts) t.t += dt;
-  UI.toasts = UI.toasts.filter((t) => t.t < t.life);
-  if (UI.info && (UI.info.t -= dt) <= 0) UI.info = null;
-  const P = UI.panel;
-  if (P) {
-    P.anim = clamp(P.anim + (P.closing ? -dt : dt) * 5, 0, 1);
-    if (P.closing && P.anim <= 0) UI.panel = null;
-    else if (!ptr.scrolling) {
-      P.scroll += P.vel * dt; P.vel *= Math.exp(-dt * 5);
-      if (P.scroll < 0) { P.scroll = lerp(P.scroll, 0, 1 - Math.exp(-dt * 18)); P.vel = 0; }
-      if (P.scroll > P.max) { P.scroll = lerp(P.scroll, P.max, 1 - Math.exp(-dt * 18)); P.vel = 0; }
-    }
+  const n = st.count ? st.count() : 0;
+  $('.n', ui.goal).textContent = st.target ? `${n}/${st.target}` : '';
+  let frac = st.target ? n / st.target : 0;
+  if (st.bar) { const ps = G.plants.filter((p) => p.c === 'carrot'); frac = ps.length ? Math.max(...ps.map((p) => Wd.growth(p))) : 0; }
+  $('.bar i', ui.goal).style.width = Math.round(frac * 100) + '%';
+  // world + UI pointers
+  let guide = null, hand = null;
+  if (G.tut === 0) {
+    const spot = suggestSpot();
+    if (spot) guide = { x: spot.x, z: spot.z, h: 6, r: 0.6, s: 0.6 };
+    if (!selCrop()) { const s = ui.hotbar.querySelector('[data-id="seed:carrot"]'); if (s) hand = center(s); }
+    else if (spot) { const p = Wd.project(spot.x, 2, spot.z); hand = { x: p.x + 4, y: p.y + 6 }; }
+  } else if (G.tut === 2) {
+    const pl = G.plants.find((p) => ripeCount(p));
+    if (pl) { guide = { x: pl.x, z: pl.z, h: 9, r: 0.6, s: 0.6 }; const p = Wd.plantScreen(pl, 0.4); hand = { x: p.x + 4, y: p.y + 10 }; }
+  } else if (G.tut === 3) {
+    if (sheetKind === 'sell') { const b = $('#sellAll'); if (b && G.bag.length) hand = center(b); }
+    else { guide = { x: 15, z: -37, y: 1, h: 20, r: 2.2, trail: true }; hand = Wd.stallScreen('sell'); }
+  } else if (G.tut === 4) {
+    if (sheetKind === 'seeds') { const b = ui.sheet.querySelector('[data-id="buy-carrot"]'); if (b) hand = center(b); }
+    else { guide = { x: -15, z: -37, y: 1, h: 20, r: 2.2, trail: true }; hand = Wd.stallScreen('seeds'); }
   }
-  // hold-to-repeat buttons
-  if (ptr.down && ptr.hit && ptr.hit.repeat && !ptr.moved && inside(ptr.hit, ptr.x, ptr.y)) {
-    ptr.held += dt;
-    if (ptr.held > 0.45) { ptr.rep -= dt; if (ptr.rep <= 0) { ptr.rep = 0.09; ptr.repeated = true; ptr.hit.fn(); } }
-  }
-  ensureSelection();
-  tutorialStep();
-  if ((rescueT -= dt) <= 0) {
-    rescueT = 3;
-    if (G.money < 10 && !Object.keys(G.seeds).length && !G.plots.some(Boolean) && !G.bag.length) {
-      G.seeds.carrot = 3; G.sel = 'seed:carrot';
-      toast('The seed seller felt generous and gave you 3 free Carrot seeds!', '#a8ff8a');
-    }
-  }
-  // ambient announcements
-  const n = isNight();
-  if (lastNight !== null && n !== lastNight) toast(n ? (bloodMoon() ? 'A Blood Moon rises! Fruit may become Bloodlit (x4).' : 'Night falls. Moonlight can make fruit Moonlit (x2).') : 'Good morning!', n ? '#d6c8ff' : '#ffe9a8');
-  lastNight = n;
-  const p = period();
-  if (lastPeriod !== null && p !== lastPeriod) { toast('The Seed Shop has restocked!', '#a8ff8a'); burst(L.stalls.seeds.x + 22, L.stalls.seeds.y + 10, ['#a8ff8a', '#fff6dc', '#ffd23f'], 14, { speed: 35 }); }
-  lastPeriod = p;
+  Wd.setGuide(guide);
+  if (hand) {
+    ui.hand.hidden = false;
+    const bob = Math.abs(Math.sin(Wd.W.t * 5)) * 8;
+    ui.hand.style.left = hand.x - 8 + 'px'; ui.hand.style.top = hand.y + 4 + bob + 'px';
+  } else ui.hand.hidden = true;
 }
-
-export function drawUI(g) {
-  hits = [];
-  if (UI.title) { drawBar(g); hits = []; drawTitle(g); UI.hits = hits; return; }
-  drawHud(g);
-  if (UI.info) drawInfo(g);
-  drawBar(g);
-  drawTutorial(g);
-  if (UI.panel) drawPanel(g);
-  if (UI.confirm) drawConfirm(g);
-  drawToasts(g);
-  UI.hits = hits;
-}
-
-// ---------------------------------------------------------------- input
-function topHit(x, y) {
-  for (let k = hits.length - 1; k >= 0; k--) if (inside(hits[k], x, y)) return hits[k];
+let spotCache = null;
+function suggestSpot() {
+  if (spotCache && !placeBlock('carrot', spotCache.x, spotCache.z)) return spotCache;
+  for (const [x, z] of [[0, 8], [-4, 8], [4, 8], [-8, 8], [8, 8], [0, 12], [-4, 12], [4, 12], [0, 4], [-8, 12]]) if (!placeBlock('carrot', x, z)) return (spotCache = { x, z });
   return null;
 }
-export function pointerDown(x, y) {
-  Object.assign(ptr, { down: true, x, y, sx: x, sy: y, moved: false, hit: null, scrolling: null, garden: null, stall: null, held: 0, rep: 0, repeated: false, vy: 0, vx: 0 });
-  const h = topHit(x, y);
-  if (h) {
-    ptr.hit = h;
-    if (UI.panel && h.id !== 'dim') UI.panel.vel = 0;
-    return;
-  }
-  if (UI.title || UI.panel || UI.confirm) return;
-  const st = stallAt(x, y);
-  if (st) { ptr.stall = st; return; }
-  if (L.expandSign && x >= L.expandSign.x && x < L.expandSign.x + L.expandSign.w && y >= L.expandSign.y && y < L.expandSign.y + L.expandSign.h) { askExpand(); return; }
-  if (W8.farmer && y > L.townY + 50 && y < L.gy - 2) { walkTo(x, y); return; }
-  const i = tileAt(x, y);
-  const mode = gardenStart(i);
-  if (mode) ptr.garden = { mode, last: i };
-}
-export function pointerMove(x, y) {
-  if (!ptr.down) return;
-  const px = ptr.x, py = ptr.y;
-  ptr.x = x; ptr.y = y;
-  if (!ptr.moved && Math.hypot(x - ptr.sx, y - ptr.sy) > 4) {
-    ptr.moved = true;
-    const h = ptr.hit;
-    if (h && UI.panel && UI.panel.list && (h.clip || h.scroll) && !h.inH) ptr.scrolling = { kind: 'v', start: UI.panel.scroll, sy: y };
-    else if (h && (h.hscroll || h.inH)) ptr.scrolling = { kind: 'h', start: UI.hotScroll, sx: x };
-  }
-  if (ptr.scrolling) {
-    if (ptr.scrolling.kind === 'v') {
-      const P = UI.panel;
-      if (!P) return;
-      let s = ptr.scrolling.start - (y - ptr.scrolling.sy);
-      if (s < 0) s *= 0.4; if (s > P.max) s = P.max + (s - P.max) * 0.4;
-      P.vel = -(y - (ptr.prevY ?? y)) * 60;
-      ptr.prevY = y;
-      P.scroll = s;
-    } else UI.hotScroll = ptr.scrolling.start - (x - ptr.scrolling.sx);
-    return;
-  }
-  if (ptr.garden) {
-    // walk along the drag so fast swipes do not skip tiles
-    const steps = Math.ceil(Math.hypot(x - px, y - py) / 3) || 1;
-    for (let s = 1; s <= steps; s++) {
-      const i = tileAt(px + ((x - px) * s) / steps, py + ((y - py) * s) / steps);
-      if (i !== ptr.garden.last && i >= 0) {
-        ptr.garden.last = i;
-        applyMode(ptr.garden.mode, i);
-        const a = anchorOf(i);
-        walkTo(a.x + 8, a.y + 3);
-      }
-    }
-  }
-}
-export function pointerUp(x, y) {
-  if (!ptr.down) return;
-  ptr.down = false;
-  ptr.prevY = undefined;
-  const h = ptr.hit;
-  if (ptr.scrolling) { ptr.scrolling = null; return; }
-  if (h && !ptr.moved && !ptr.repeated && inside(h, x, y)) h.fn();
-  if (ptr.stall && !ptr.moved && stallAt(x, y) === ptr.stall) openPanel(ptr.stall);
-  ptr.hit = null;
-}
-export function wheel(dy) {
-  if (UI.panel) UI.panel.scroll = clamp(UI.panel.scroll + dy, 0, UI.panel.max);
-  else UI.hotScroll += dy;
+function celebrate(big) {
+  const f = Wd.W.farmer;
+  Wd.burst(f.x, 6, f.z, ['#ffd84e', '#5cc060', '#ff6a8a', '#6ab0ff', '#ffffff'], 30, { speed: 12, up: 16, life: 1.2, size: 0.6 });
+  sfx(big ? 'hatch' : 'buy');
+  ui.goal.classList.add('done');
+  if (big) { const p = Wd.project(f.x, 10, f.z); floatText(big, p.x, p.y, '#ffd84e', true); }
 }
 
-// ---------------------------------------------------------------- event messages
-on('broke', () => { toast('Not enough Sheckles!', '#ff9a8a'); sfx('error'); });
-on('nostock', () => { toast('Sold out! New seeds in ' + fmtTime(restockIn()), '#ff9a8a'); sfx('error'); });
-on('bagfull', () => { if (bagFullT > 0) return; bagFullT = 2; toast('Your basket is full! Sell at the SELL stand.', '#ffb08a'); sfx('error'); });
+// ---------------------------------------------------------------- per frame
+let lastNight = null, lastPeriod = null, sheetTick = 0;
+export function update(dt) {
+  // money counter
+  const d = G.money - ui.shown;
+  ui.shown = Math.abs(d) < 1 ? G.money : d < 0 ? G.money : ui.shown + d * (1 - Math.exp(-dt * 8));
+  ui.money.textContent = fmt(ui.shown);
+  // weather chip
+  const wt = G.weather.type;
+  const wk = wt !== 'clear' ? wt + Math.ceil(G.weather.left) : isNight() ? (bloodMoon() ? 'blood' : 'night') : 'clear';
+  if (ui.wk !== wk) {
+    ui.wk = wk;
+    ui.weather.innerHTML = wt !== 'clear' ? WICON[wt] + `<span>${fmtTime(G.weather.left)}</span>` : isNight() ? WICON[bloodMoon() ? 'blood' : 'night'] + `<span>${bloodMoon() ? 'Blood Moon' : 'Night'}</span>` : WICON.clear + '<span>Sunny</span>';
+  }
+  const n = totalRipe();
+  ui.ripeN.hidden = !n; ui.ripeN.textContent = n > 99 ? '99+' : n;
+  ui.harvest.classList.toggle('off', !n);
+  ui.bagN.textContent = `${G.bag.length}/${BASKET}`;
+  ui.basket.classList.toggle('full', G.bag.length >= BASKET);
+  if (ui.infoPl) { ui.infoT -= dt; updateInfo(); }
+  if (sheetKind && (sheetTick += dt) > 1) { sheetTick = 0; if (sheetKind === 'seeds') $('.sub', ui.sheet).textContent = 'Restock ' + fmtTime(restockIn()); }
+  renderHotbar();
+  tutorial(dt);
+  const night = isNight();
+  if (lastNight !== null && night !== lastNight && G.tut >= 6) toast(night ? (bloodMoon() ? 'A Blood Moon rises! Ripe fruit may turn Bloodlit (x4).' : 'Night falls. Moonlight can make fruit Moonlit (x2).') : 'Good morning!');
+  lastNight = night;
+  const p = period();
+  if (lastPeriod !== null && p !== lastPeriod) { toast('Fresh seeds at the SEEDS stall!'); if (sheetKind === 'seeds') renderSheet(); }
+  lastPeriod = p;
+  // softlock rescue
+  if (G.money < 10 && !Object.keys(G.seeds).length && !G.plants.length && !G.bag.length) { G.seeds.carrot = 3; G.sel = 'seed:carrot'; toast('The seed seller gave you 3 free Carrot seeds!'); }
+}
+
+// ---------------------------------------------------------------- reactions to game events
+let bagFullT = 0;
+on('plant', (pl) => { Wd.pop(pl, 'plant'); Wd.burst(pl.x, 2.2, pl.z, ['#a8744a', '#8e5c3a', '#c08a5a'], 7, { speed: 5, up: 7, life: 0.5, size: 0.35 }); sfx('plant', pl.id); renderHotbar(); });
+on('harvest', ({ pl, got }) => {
+  Wd.pop(pl, 'harvest'); Wd.walkTo(pl.x + 2, pl.z - 3);
+  Wd.burst(pl.x, 4, pl.z, ['#8ff06a', '#5cc060', '#ffffff'], 8, { speed: 6, up: 9, life: 0.5, size: 0.35 });
+  const to = center(ui.basket);
+  got.forEach(({ item, slot }, k) => {
+    const fw = (pl._fw && pl._fw[slot]) || { x: pl.x, y: 4, z: pl.z };
+    const from = Wd.project(fw.x, fw.y, fw.z);
+    flyIcon(ICON[item.c], from, to, k * 60, () => { bump(ui.basket); sfx('pop'); });
+    const special = item.m.find((m) => m !== 'wet' && m !== 'chilled');
+    if ((special || item.big) && k < 2) floatText(`${item.big ? 'Giant ' : ''}${special ? MUTS[special].name + ' ' : ''}${CROP[item.c].name} $${fmt(item.v)}`, from.x, from.y - 20, special ? MUTS[special].col : '#c8f0ff');
+  });
+  sfx('harvest', pl.id);
+});
+on('sell', ({ total }) => {
+  const s = Wd.stallScreen('sell'), to = center($('#moneyPill'));
+  const n = Math.min(12, 3 + Math.floor(Math.log10(total + 1) * 2));
+  for (let k = 0; k < n; k++) flyCoin({ x: s.x + (Math.random() - 0.5) * 60, y: s.y + 30 }, to, k * 45);
+  floatText('+$' + fmt(total), s.x, s.y, '#ffd84e', true);
+  sfx('sell');
+  save();
+});
+function flyCoin(from, to, delay) {
+  const c = h('i', 'coin fly'); c.style.width = c.style.height = '18px'; c.style.margin = '-9px 0 0 -9px'; c.style.position = 'absolute'; ui.fx.appendChild(c);
+  const a = c.animate([{ transform: `translate(${from.x}px,${from.y}px)` }, { transform: `translate(${(from.x + to.x) / 2}px,${Math.min(from.y, to.y) - 60}px)`, offset: 0.5 }, { transform: `translate(${to.x}px,${to.y}px)` }], { duration: 600, delay, easing: 'ease-in', fill: 'both' });
+  a.onfinish = () => { c.remove(); bump(ui.money); sfx('coin'); };
+}
+on('dig', (pl) => { Wd.burst(pl.x, 3, pl.z, ['#a8744a', '#8e5c3a', '#5cc060'], 14, { speed: 8, up: 10 }); sfx('dig'); });
+on('ripe', (pl) => { Wd.burst(pl.x, 5, pl.z, ['#ffffff', '#fff6c0'], 6, { speed: 3, up: 6, g: 4, life: 0.8, size: 0.3 }); });
+on('mut', ({ pl, m }) => {
+  if (m === 'wet' || m === 'chilled') return;
+  const p = Wd.plantScreen(pl, 0.8);
+  floatText(MUTS[m].name + '!', p.x, p.y, MUTS[m].col);
+  Wd.burst(pl.x, 6, pl.z, [MUTS[m].col, '#ffffff'], 12, { speed: 6, up: 8 });
+  sfx('mut');
+});
+on('lightning', ({ x, z }) => { Wd.lightning(x, z); sfx('thunder'); });
+on('moonbeam', (pl) => { for (let k = 0; k < 14; k++) Wd.sparkle(pl.x, 4 + k * 2.5, pl.z, bloodMoon() ? '#ff7080' : '#d6c8ff'); });
+on('broke', () => { toast('Not enough money!'); sfx('error'); });
+on('nostock', () => { toast('Sold out! New seeds in ' + fmtTime(restockIn())); sfx('error'); });
+on('bagfull', () => { const t = performance.now(); if (t - bagFullT < 2000) return; bagFullT = t; toast('Basket full! Sell at the SELL stall.'); sfx('error'); });
 on('buy', () => sfx('buy'));
-on('toast', (s) => { toast(s); sfx('error'); });
-on('weather', (w) => toast(w === 'clear' ? 'The skies are clearing up.' : WEATHER[w].msg, w === 'clear' ? '#ffe9a8' : '#9fd8ff'));
-on('hatch', ({ type }) => toast(`Your egg hatched a ${PETS[type].name}! ${PETS[type].desc}`, '#ffd84a'));
-on('release', (p) => toast(`Your ${PETS[p.type].name} wandered off. Bye bye!`));
-on('expand', () => toast('Your garden grew!', '#a8ff8a'));
-on('sprinklerdone', () => toast('A sprinkler ran dry.'));
-on('welcome', ({ sec, ripe }) => { if (sec > 30) toast(`Welcome back! Your garden grew for ${fmtTime(sec)}.` + (ripe ? ` ${ripe} fruit ripened.` : ''), '#a8ff8a'); });
+on('weather', (w) => { if (G.tut >= 6) toast(w === 'clear' ? 'The skies are clearing up.' : WEATHER[w].msg); });
+on('welcome', ({ sec, ripe }) => { if (sec > 30) setTimeout(() => toast(`Welcome back! Your garden grew for ${fmtTime(sec)}.` + (ripe ? ` ${ripe} fruit ripened.` : '')), 600); });
+on('reset', () => { hotKey = ''; lastStep = -1; ui.shown = G.money; });

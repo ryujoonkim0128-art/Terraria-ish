@@ -1,6 +1,6 @@
 // Style: HD-2D. Outline-free pixel art with hue-shifted ramps, lit cinematically: god rays, bloom, tilt-shift, glass UI.
 import { W, H, STALLS, PLANTS, FARMER, GHOST, HOTBAR, MONEY, SLOT, HARVEST, patchPoints, makeCanvas, seeded, fontsReady } from './common.js';
-import { canvas, painter } from '../../src/util.js';
+import { canvas, painter } from './pixel-util.js';
 
 const F = '"Pixelify Sans", ui-monospace, monospace';
 const K = 2, w = W / K, h = H / K; // the pixel layer is half resolution
