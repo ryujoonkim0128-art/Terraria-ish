@@ -52,27 +52,45 @@ async function walkTo(tx, tz, stop = 3, maxSteps = 60) {
 
 await page.click('#title button', { force: true });
 await page.waitForFunction(() => !document.querySelector('#goal').hidden && !document.querySelector('#hand').hidden, null, { timeout: 8000 }).catch(() => {});
-let s = await G(() => ({ goal: !document.querySelector('#goal').hidden, hand: !document.querySelector('#hand').hidden, sel: window.game.G.sel, tp: document.querySelectorAll('#tp .tp').length }));
-check('title gone, goal + hand + teleports shown, carrot seeds in hand', s.goal && s.hand && s.sel === 'seed:carrot' && s.tp === 3, s);
-await shot('1_plant');
+let s = await G(() => ({ goal: document.querySelector('#goal .txt').textContent, n: document.querySelector('#goal .n').textContent, money: window.game.G.money, seeds: Object.keys(window.game.G.seeds).length, hand: !document.querySelector('#hand').hidden, tp: document.querySelectorAll('#tp .tp').length }));
+check('a fresh start: $20, no seeds, and the first goal is buying two carrots', s.goal === 'Buy seeds' && s.n === '0/2' && s.money === 20 && s.seeds === 0 && s.hand && s.tp === 3, s);
+s = await G(() => window.game.Neighbors.neighbors.map((n) => n && { name: n.name, plants: n.plants.length }));
+check('five other gardens on the street, each with an owner and plants', s.filter(Boolean).length === 5 && s.every((n) => n && n.name && n.plants >= 8), s);
+await shot('1_start');
+
+// ---- the first carrots come from the shop
+await page.click('[data-tp="seeds"]');
+await page.waitForTimeout(900);
+s = await G(() => ({ open: document.querySelector('#sheet').classList.contains('open'), h: document.querySelector('#sheet h2').textContent, near: window.game.World.nearShop(14) }));
+check('Seeds teleport goes to the stand and opens the shop', s.open && s.h === 'Seeds' && s.near === 'seeds', s);
+await page.click('[data-id="buy-carrot"]'); await page.click('[data-id="buy-carrot"]');
+await tick();
+s = await G(() => ({ seeds: window.game.G.seeds, money: window.game.G.money, tut: window.game.G.tut }));
+check('two carrots cost the whole $20, and the tutorial says go home', s.seeds.carrot === 2 && s.money === 0 && s.tut === 1, s);
+await shot('2_bought');
+await page.click('[data-tp="garden"]');
+await page.waitForTimeout(700);
+await tick();
+s = await G(() => ({ tut: window.game.G.tut, open: document.querySelector('#sheet').classList.contains('open'), d: window.game.World.distTo(window.game.World.HOME.x, window.game.World.HOME.z) }));
+check('Garden teleport goes home and the tutorial says plant', s.tut === 2 && !s.open && s.d < 2, s);
 
 // ---- plant: tap the soil
 await tapAt(await scr(6, 25));
 s = await G(() => ({ n: window.game.G.plants.length, seeds: window.game.G.seeds.carrot }));
-check('tap the soil plants a seed', s.n === 1 && s.seeds === 4, s);
+check('tap the soil plants a seed', s.n === 1 && s.seeds === 1, s);
 await tapAt(await scr(6.5, 25.3));
 check('too close to another plant is refused', (await G(() => window.game.G.plants.length)) === 1);
 await tapAt(await scr(-9, 46, 1));
 check('grass outside the garden is refused', (await G(() => window.game.G.plants.length)) === 1);
-for (const [x, z] of [[11, 23], [6, 20], [11, 18], [16, 21]]) await tapAt(await scr(x, z));
+await tapAt(await scr(11, 23));
 await tick();
 s = await G(() => ({ n: window.game.G.plants.length, tut: window.game.G.tut, sel: window.game.G.sel }));
-check('five carrots planted, tutorial moves on, hand empties', s.n === 5 && s.tut === 1 && s.sel === null, s);
-await shot('2_growing');
+check('both carrots planted, tutorial moves on, hand empties', s.n === 2 && s.tut === 3 && s.sel === null, s);
+await shot('3_growing');
 await grow(10); await tick();
 s = await G(() => ({ ripe: window.game.G.plants.filter((p) => p.fr[0].p >= 1).length, tut: window.game.G.tut }));
-check('tutorial carrots grow in seconds', s.ripe === 5 && s.tut === 2, s);
-await shot('3_collect_goal', 900);
+check('tutorial carrots grow in seconds', s.ripe === 2 && s.tut === 4, s);
+await shot('4_collect_goal', 900);
 s = await G(() => ({ hand: document.querySelector('#hand').className, act: document.querySelector('#act').hidden }));
 check('far from the crops the hand teaches the joystick', s.hand === 'drag' && s.act, s);
 
@@ -83,58 +101,55 @@ check('joystick walks the farmer to the crops', Math.hypot(p1.x - 10, p1.z - 22)
 await tick();
 s = await G(() => ({ act: !document.querySelector('#act').hidden, prompt: !document.querySelector('#prompt').hidden, lbl: document.querySelector('#act .lbl').textContent, sub: document.querySelector('#prompt small').textContent }));
 check('Collect button and prompt pop up next to ripe crops', s.act && s.prompt && s.lbl === 'Collect' && /Carrot/.test(s.sub), s);
-await shot('4_near_crops');
+await shot('5_near_crops');
 await page.click('#act');
 s = await G(() => window.game.G.bag.length);
 check('tap Collect picks one carrot', s === 1, s);
-// tap a fruit directly in the world
-const fr = await G(() => { const pl = window.game.G.plants.find((p) => p._fw && p._fw[0] && p._fw[0].ripe); const f = pl._fw[0]; return window.game.World.project(f.x, f.y - 1, f.z); });
-await tapAt(fr);
-s = await G(() => window.game.G.bag.length);
-check('tapping a ripe fruit picks it', s === 2, s);
 // hold Collect to grab everything in reach
 const ab = await page.locator('#act').boundingBox();
 await page.mouse.move(ab.x + ab.width / 2, ab.y + ab.height / 2); await page.mouse.down();
-for (let i = 0; i < 40 && (await G(() => window.game.G.bag.length)) < 5; i++) await page.waitForTimeout(150);
+for (let i = 0; i < 40 && (await G(() => window.game.G.bag.length)) < 2; i++) await page.waitForTimeout(150);
 await page.mouse.up();
 await tick();
 s = await G(() => ({ bag: window.game.G.bag.length, plants: window.game.G.plants.length, tut: window.game.G.tut, badge: document.querySelector('#bagN').textContent }));
-check('holding Collect grabs the rest, Sell badge counts them', s.bag === 5 && s.plants === 0 && s.tut === 3 && s.badge === '5', s);
-await shot('5_sell_goal');
+check('holding Collect grabs the rest, Sell badge counts them', s.bag === 2 && s.plants === 0 && s.tut === 5 && s.badge === '2', s);
 
-// ---- teleport to Sell
+// ---- sell them, and that pays for a Strawberry
 await page.click('[data-tp="sell"]');
 await page.waitForTimeout(900);
 s = await G(() => ({ open: document.querySelector('#sheet').classList.contains('open'), h: document.querySelector('#sheet h2').textContent, near: window.game.World.nearShop(14) }));
 check('Sell teleport goes to the stand and opens the sheet', s.open && s.h === 'Sell' && s.near === 'sell', s);
 await shot('6_sell_sheet');
-const m0 = await G(() => window.game.G.money);
 await page.click('#sellAll');
 await tick();
 s = await G(() => ({ money: window.game.G.money, bag: window.game.G.bag.length, tut: window.game.G.tut }));
-check('Sell all pays and the tutorial moves on', s.money > m0 && s.bag === 0 && s.tut === 4, s);
-
-// ---- teleport to Seeds straight from the open sheet
+check('two carrots sell for enough to buy a Strawberry', s.money >= 25 && s.bag === 0 && s.tut === 6, s);
 await page.click('[data-tp="seeds"]');
 await page.waitForTimeout(900);
-s = await G(() => ({ open: document.querySelector('#sheet').classList.contains('open'), h: document.querySelector('#sheet h2').textContent, near: window.game.World.nearShop(14) }));
-check('Seeds teleport works from inside another sheet', s.open && s.h === 'Seeds' && s.near === 'seeds', s);
 await shot('7_seed_sheet');
-await page.click('[data-id="buy-carrot"]');
+await page.click('[data-id="buy-strawberry"]');
 await tick();
-s = await G(() => ({ tut: window.game.G.tut, seeds: window.game.G.seeds }));
-check('buying a seed moves the tutorial to "go home"', s.tut === 5 && s.seeds.carrot === 1, s);
-
-// ---- teleport home
+s = await G(() => ({ tut: window.game.G.tut, seeds: window.game.G.seeds, sel: window.game.G.sel }));
+check('buying a Strawberry moves the tutorial to "go home"', s.tut === 7 && s.seeds.strawberry === 1 && s.sel === 'seed:strawberry', s);
 await page.click('[data-tp="garden"]');
 await page.waitForTimeout(700);
 await tick();
-s = await G(() => ({ tut: window.game.G.tut, seeds: window.game.G.seeds, open: document.querySelector('#sheet').classList.contains('open'), d: window.game.World.distTo(window.game.World.HOME.x, window.game.World.HOME.z) }));
-check('Garden teleport goes home and unlocks the garden, with 3 carrot seeds', s.tut === 6 && s.seeds.carrot === 4 && !s.open && s.d < 2, s);
-await shot('8_home', 200);
-await G(() => { for (let i = 0; i < 6; i++) window.game.UI.update(0.5); });
+await G(() => { for (let i = 0; i < 4; i++) window.game.UI.update(0.5); });
 s = await G(() => ({ tut: window.game.G.tut, goal: document.querySelector('#goal').hidden, hand: document.querySelector('#hand').hidden }));
-check('tutorial finishes and its chip and hand go away', s.tut === 7 && s.goal && s.hand, s);
+check('going home finishes the tutorial and its chip and hand go away', s.tut === 8 && s.goal && s.hand, s);
+await shot('8_home', 200);
+
+// ---- your first Strawberry fruits again and again
+await tapAt(await scr(-10, 18));
+s = await G(() => window.game.G.plants.length);
+check('the Strawberry is planted from the hotbar', s === 1, s);
+await G(() => window.game.World.teleport({ x: -10, z: 27 }));
+await grow(40); await tick(); await page.waitForTimeout(300);
+const fr = await G(() => { const pl = window.game.G.plants.find((p) => p._fw && p._fw.some((f) => f && f.ripe)); const k = pl._fw.findIndex((f) => f && f.ripe), f = pl._fw[k]; return window.game.World.project(f.x, f.y - 1, f.z); });
+await tapAt(fr);
+s = await G(() => window.game.G.bag.length);
+check('tapping a ripe fruit picks it', s === 1, s);
+await G(() => { window.game.G.bag = []; window.game.World.teleport(window.game.World.HOME); });
 
 // ---- walk to a shop and use the proximity prompt
 await G(() => window.game.World.teleport({ x: -14, z: -50 }));
@@ -170,11 +185,6 @@ check('dragging the right side turns the camera', Math.abs(yaw1 - yaw0) > 0.3, {
 await G(() => window.game.World.teleport(window.game.World.HOME));
 
 // ---- shovel
-await G(() => { window.game.G.seeds.strawberry = 2; window.game.UI.renderHotbar(); });
-await page.click('#hotbar [data-id="seed:strawberry"]');
-await tapAt(await scr(-10, 18));
-s = await G(() => window.game.G.plants.length);
-check('strawberry planted from the hotbar', s === 1, s);
 await page.click('#hotbar [data-id="shovel"]');
 await tapAt(await scr(-10, 18, 3));
 check('shovel digs a cheap plant', (await G(() => window.game.G.plants.length)) === 0);
@@ -206,6 +216,38 @@ s = await G(() => ({ chip: document.querySelector('#event').hidden, open: window
 check('the market packs up and the next one is scheduled', s.chip && !s.open && s.next > 600, s);
 await G(() => window.game.World.teleport(window.game.World.HOME));
 
+// ---- the other gardens: walk up to a neighbor's ripe fruit and pay to steal it; their garden moves out and a new one moves in
+const target = await G(() => {
+  const g = window.game; g.G.money = 1e15;
+  let best = null;
+  for (const nb of g.Neighbors.neighbors) for (const pl of nb.plants) pl.fr.forEach((f, k) => { if (f && f.p >= 1 && (!best || g.State.stealPrice(pl, k) < best.price)) best = { nb, pl, k, price: g.State.stealPrice(pl, k) }; });
+  const R = best.nb.R;
+  g.World.teleport({ x: best.pl.x, z: best.pl.z + (R.face < 0 ? 3 : -3) }, R.face < 0 ? Math.PI : 0, R.face < 0 ? 0 : Math.PI);
+  return { name: best.nb.name, plot: best.nb.plot };
+});
+await page.waitForTimeout(600); await tick();
+s = await G(() => ({ lbl: document.querySelector('#act .lbl').textContent, sub: document.querySelector('#prompt small').textContent }));
+check("a Steal button with a price shows next to a neighbor's ripe fruit", s.lbl === 'Steal' && /\$/.test(s.sub), s);
+await shot('11_steal_prompt');
+const m1 = await G(() => window.game.G.money), b1 = await G(() => window.game.G.bag.length);
+await page.click('#act');
+await page.waitForTimeout(400);
+s = await G(() => document.querySelector('#dialog .box div').innerText);
+check('stealing asks first, naming the owner', s.includes(target.name + "'s") && /move away/.test(s), s);
+await page.click('#dialog .btns button:last-child');
+s = await G((m1) => ({ paid: m1 - window.game.G.money, bag: window.game.G.bag.length, item: window.game.G.bag[window.game.G.bag.length - 1] }), m1);
+check('the stolen fruit costs half its worth and goes in your basket', s.paid > 0 && Math.abs(s.paid - s.item.v / 2) <= Math.max(1, s.item.v * 0.06) && s.bag === b1 + 1, s);
+for (let i = 0; i < 20 && (await G((pl) => !!window.game.Neighbors.neighbors[pl], target.plot)); i++) await G(() => window.game.Neighbors.update(0.5));
+s = await G(() => [...document.querySelectorAll('.toast')].map((t) => t.textContent));
+check('the garden you stole from moves out', (await G((pl) => window.game.Neighbors.neighbors[pl] === null, target.plot)) && s.some((t) => t.includes(target.name + "'s garden moved out")), s);
+for (let i = 0; i < 60 && !(await G((pl) => !!window.game.Neighbors.neighbors[pl], target.plot)); i++) await G(() => window.game.Neighbors.update(0.5));
+s = await G((pl) => { const nb = window.game.Neighbors.neighbors[pl]; return nb && { name: nb.name, plants: nb.plants.length }; }, target.plot);
+check('a new garden moves in', !!s && s.name !== target.name && s.plants >= 8, s);
+await G(() => { const g = window.game, nb = g.Neighbors.neighbors.find(Boolean), pl = nb.plants.find((p) => p.fr.some((f) => f && f.p >= 1)); g.State.steal(nb, pl, pl.fr.findIndex((f) => f && f.p >= 1)); });
+s = await G(() => ({ bag: window.game.G.bag.length, toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) }));
+check('you have to lie low before stealing again', s.bag === b1 + 1 && s.toasts.some((t) => t.startsWith('Lie low')), s);
+await G(() => { window.game.G.bag = []; window.game.World.teleport(window.game.World.HOME); });
+
 // ---- rain mutations
 await G(() => { window.game.G.seeds.strawberry = 1; window.game.G.sel = 'seed:strawberry'; });
 await tapAt(await scr(-4, 22));
@@ -220,7 +262,7 @@ await G(() => window.game.save());
 await page.reload();
 await page.waitForFunction('window.game && document.querySelector("#title button")');
 s = await G(() => ({ tut: window.game.G.tut, plants: window.game.G.plants.length }));
-check('save survives a reload', s.tut === 7 && s.plants === 1, s);
+check('save survives a reload', s.tut === 8 && s.plants === 1, s);
 check('no errors', errors.length === 0, errors);
 await browser.close(); server.close();
 console.log(failed ? `${failed} failed` : 'all checks passed');

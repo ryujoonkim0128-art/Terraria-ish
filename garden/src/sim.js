@@ -1,6 +1,6 @@
 // Time passing: growth, fruiting, weather, day and night, and weather mutations.
 import { CROPS, CROP, WEATHER, DAY_LEN, NIGHT_START, NIGHT_END, MARKET_LEN, MARKET_GAP, POOLS } from './data.js';
-import { G, emit, newFruit } from './state.js';
+import { G, emit, newFruit, tutDone } from './state.js';
 import { hash } from './voxel.js';
 
 export const dayFrac = () => (G.time % DAY_LEN) / DAY_LEN;
@@ -42,7 +42,7 @@ function marketTick(dt) {
   const m = G.mkt;
   if (m.left > 0) {
     if ((m.left -= dt) <= 0) { m.left = 0; m.next = MARKET_GAP; m.wares = null; emit('market', false); }
-  } else if (G.tut >= 7) {
+  } else if (tutDone()) {
     const was = m.next;
     m.next -= dt;
     if (was > 30 && m.next <= 30) emit('marketSoon');
@@ -58,7 +58,7 @@ export function update(dt, offline = false) {
     const w = G.weather;
     if (w.type !== 'clear') {
       if ((w.left -= dt) <= 0) { w.type = 'clear'; G.nextWeather = 240 + Math.random() * 180; emit('weather', 'clear'); }
-    } else if (G.tut >= 7 && (G.nextWeather -= dt) <= 0) {
+    } else if (tutDone() && (G.nextWeather -= dt) <= 0) {
       const r = Math.random();
       w.type = r < 0.5 ? 'rain' : r < 0.8 ? 'snow' : 'storm';
       w.left = 70 + Math.random() * 40;

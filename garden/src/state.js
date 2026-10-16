@@ -7,14 +7,17 @@ const subs = {};
 export const on = (e, f) => (subs[e] ||= []).push(f);
 export const emit = (e, d) => (subs[e] || []).forEach((f) => f(d));
 
-const KEY = 'voxel-garden-save-v2';
+const KEY = 'voxel-garden-save-v3';
+// G.tut counts finished tutorial steps (see ui.js); this many means the tutorial is over
+export const TUT_DONE = 8;
+export const tutDone = () => G.tut >= TUT_DONE;
 export function fresh() {
   return {
-    v: 2, seed: (Math.random() * 1e9) | 0,
-    money: 20, seeds: { carrot: 5 }, bag: [], plants: [], nextId: 1,
+    v: 3, seed: (Math.random() * 1e9) | 0,
+    money: 20, seeds: {}, bag: [], plants: [], nextId: 1,  // $20: enough for your first two carrots
     time: DAY_LEN * 0.1, weather: { type: 'clear', left: 0 }, nextWeather: 200,
-    bought: { p: -1, c: {} }, tut: 0, sel: 'seed:carrot',  // tut 7 = tutorial finished
-    stats: { harvested: 0, earned: 0, planted: 0, best: 0 },
+    bought: { p: -1, c: {} }, tut: 0, sel: null, stealNext: 0,
+    stats: { harvested: 0, earned: 0, planted: 0, best: 0, stolen: 0 },
     mkt: { next: 420, left: 0, hot: null, wares: null },  // Market Day: seconds until it opens, seconds left while open
     sound: true, music: true, saved: Date.now(),
   };
@@ -22,7 +25,7 @@ export function fresh() {
 export function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { d = null; }
-  if (!d || d.v !== 2 || !Array.isArray(d.plants)) { G = fresh(); return 0; }
+  if (!d || d.v !== 3 || !Array.isArray(d.plants)) { G = fresh(); return 0; }
   G = Object.assign(fresh(), d);
   return Math.max(0, Math.min(8 * 3600, (Date.now() - (d.saved || Date.now())) / 1000));
 }
@@ -87,13 +90,14 @@ export function plant(crop, x, z) {
   emit('plant', pl);
   return pl;
 }
+const fruitItem = (crop, f) => ({ c: crop, kg: +(CROP[crop].kg * f.s).toFixed(3), m: f.m.slice(), v: fruitValue(crop, f.s, f.m), big: f.s > 1.3 });
 // pick one ripe fruit (slot k) off a plant
 export function collect(pl, k) {
   const f = pl && pl.fr[k];
   if (!f || f.p < 1) return null;
   if (G.bag.length >= BASKET) { emit('bagfull'); return null; }
   const c = CROP[pl.c];
-  const item = { c: pl.c, kg: +(c.kg * f.s).toFixed(3), m: f.m.slice(), v: fruitValue(pl.c, f.s, f.m), big: f.s > 1.3 };
+  const item = fruitItem(pl.c, f);
   const at = pl._fw && pl._fw[k];
   G.bag.push(item);
   G.stats.harvested++;
@@ -135,6 +139,28 @@ export function buyWare(cart, i) {
   G.seeds[w.id] = (G.seeds[w.id] || 0) + 1;
   emit('buy', w.id);
   return true;
+}
+// Stealing from another garden: you pay half what the fruit is worth, it goes in your basket, and that garden
+// moves out (see neighbors.js). Then you lie low for a while before you can steal again.
+export const STEAL_COOLDOWN = 600;
+const roundUp = (x) => { const p = 10 ** Math.max(0, Math.floor(Math.log10(x)) - 1); return Math.ceil(x / p) * p; };
+export const stealPrice = (pl, k) => roundUp(Math.max(1, fruitValue(pl.c, pl.fr[k].s, pl.fr[k].m) / 2));
+export const stealWait = () => Math.max(0, (G.stealNext - Date.now()) / 1000);
+export function steal(owner, pl, k) {
+  const f = pl && pl.fr[k];
+  if (!f || f.p < 1 || !owner.plants.includes(pl)) return null;
+  if (stealWait() > 0) { emit('stealwait'); return null; }
+  if (G.bag.length >= BASKET) { emit('bagfull'); return null; }
+  const price = stealPrice(pl, k);
+  if (G.money < price) { emit('broke'); return null; }
+  const item = fruitItem(pl.c, f), at = pl._fw && pl._fw[k];
+  G.money -= price;
+  G.bag.push(item);
+  G.stealNext = Date.now() + STEAL_COOLDOWN * 1000;
+  G.stats.stolen++;
+  if (CROP[pl.c].multi) { pl.fr[k] = null; pl.cd[k] = 4 + Math.random() * 4; } else owner.plants = owner.plants.filter((p) => p !== pl);
+  emit('steal', { owner, pl, k, item, price, at });
+  return item;
 }
 export function dig(pl) {
   G.plants = G.plants.filter((p) => p !== pl);

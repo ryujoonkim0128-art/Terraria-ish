@@ -24,7 +24,7 @@ await p.waitForFunction('window.game && document.querySelector("#title button")'
 await p.click('#title button', { force: true });
 await p.evaluate(() => {
   const { G, State, World, sim } = window.game;
-  G.tut = 7; G.money = 1234567;
+  G.tut = 8; G.money = 1234567;
   const crops = ['apple', 'corn', 'tulip', 'tulip', 'strawberry', 'tomato', 'blueberry', 'carrot', 'carrot', 'carrot', 'pumpkin', 'watermelon', 'coconut', 'dragonfruit', 'mango', 'grape', 'mushroom', 'beanstalk', 'strawberry', 'tomato'];
   const spots = [[-13, -14], [12, -16], [-22, -2], [-20, 2], [-6, -2], [10, -4], [20, 4], [0, 8], [3, 9], [-2, 10], [-13, 12], [12, 14], [-4, -18], [22, -6], [-17, -24], [3, -26], [6, 20], [-8, 21], [15, 21], [-20, 12]];
   crops.forEach((c, i) => { G.seeds[c] = (G.seeds[c] || 0) + 1; State.plant(c, spots[i][0], spots[i][1]); });
