@@ -1,9 +1,8 @@
 # Grow a Garden — voxel edition
 
-A mobile take on the Roblox game *Grow a Garden*, built as a little 3D voxel world: one tidy rectangle of mowed
-lawn floating on white, with your planter in the middle. Walk your farmer around with a thumbstick, plant anywhere
-in your garden bed, watch crops grow (even while you're away), collect the fruit, then teleport to the Sell and
-Seeds stands.
+A mobile take on the Roblox game *Grow a Garden*, built as a little 3D voxel world on plain white: just your
+planter, a path and the market plaza. Walk your farmer around with a thumbstick, plant anywhere in your garden
+bed, watch crops grow (even while you're away), collect the fruit, then teleport to the Sell and Seeds stands.
 
 No build step. Three.js r128 is vendored in `vendor/`; everything else is plain ES modules.
 
@@ -39,7 +38,7 @@ Add it to your home screen for fullscreen. Progress saves on the device.
   Wet, Chilled, Frozen, Shocked (lightning, x100), Moonlit, Bloodlit, plus rare Gold (x20) and Rainbow (x50).
 - A wordless tutorial: plant, grow, collect, sell, buy, go home. One objective chip, a bouncing arrow and
   glowing trail in the world, and a pointing hand that shows where to tap or which way to push the stick.
-- A market plaza with the Seeds and Sell stands, up an avenue of trees from your garden.
+- A market plaza with the Seeds and Sell stands, up a short path from your garden.
 - Offline growth (up to 8 hours), autosave, generative music, sound effects and haptics.
 
 ## Code map

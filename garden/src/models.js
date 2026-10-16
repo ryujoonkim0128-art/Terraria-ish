@@ -445,12 +445,6 @@ export function heldGeo(kind) {
 }
 
 // ---------------------------------------------------------------- scenery drawn straight into a shared voxel set
-export function drawTree(V, x, y, z, v) {
-  const h = 4 + (v % 3), r = 3.4 + (v % 2) * 0.7;
-  V.box(x, y, z, x, y + h, z, '#8a5a3a');
-  V.ball(x, y + h + 3, z, r, (a, b, c) => (hash(a + x, b + v, c + z) < 0.5 ? '#5cb860' : '#4aa452'), 1, 0.06);
-  if (v % 4 === 0) V.ball(x + 2, y + h + 5, z - 1, r * 0.6, '#68c46a', 1, 0.06);
-}
 export function drawLamp(V, x, y, z) {
   V.box(x, y, z, x, y, z, '#4a4462', 0.02);
   V.box(x, y + 1, z, x, y + 7, z, '#5e5878', 0.02);
@@ -486,14 +480,6 @@ export function stallGeo(kind) {
   });
 }
 export function lanternGeo() { return memo('lantern', () => { const V = new Vox(); V.set(0, 0, 0, '#ffe08a', 0); V.set(0, 1, 0, '#3a3448', 0); return mesh(V, { ao: false }); }); }
-export function cloudGeo(v) {
-  return memo('cloud' + v, () => {
-    const V = new Vox(rng(v * 5 + 1)), R = V.R;
-    const n = 3 + v;
-    for (let k = 0; k < n; k++) V.ball(k * 4 - n * 2, 0, Math.round((R() - 0.5) * 4), 3 + R() * 2, '#ffffff', 0.55, 0.02);
-    return mesh(V, { ao: false });
-  });
-}
 export function boltGeo(len) {
   return memo('bolt' + len, () => { const V = new Vox(); let x = 0; for (let y = 0; y < len; y++) { if (y % 4 === 3) x += hash(y, len) < 0.5 ? 1 : -1; V.set(x, -y, 0, '#fffbd0', 0); } return mesh(V, { ao: false }); });
 }

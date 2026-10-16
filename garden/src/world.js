@@ -18,8 +18,6 @@ export const SHOPS = {
 };
 export const HOME = { x: 0, z: 35 };
 const PLAZA = { x0: -40, x1: 40, z0: -92, z1: -50 };
-// the whole map is one tidy rectangle of lawn floating on white
-const LAWN = { x0: -72, x1: 72, z0: -116, z1: 80 };
 // Market Day: two pop-up carts beside the stalls and a maypole in the middle of the plaza
 export const CARTS = { veg: { x: -31, z: -71 }, berry: { x: 31, z: -71 } };
 const MAYPOLE = { x: 0, z: -62 };
@@ -29,7 +27,7 @@ export const onAnyBed = (x, z) => inRect(BED, x, z, -1);
 export const groundY = (x, z) => (onAnyBed(x, z) ? TOP : 1);
 
 let renderer, scene, cam, sun, hemi, skyC, skyG, plants, fruits, partMesh, rainMesh, snowMesh, trailMesh, arrow, ring, ghostRing, bolt, heldMesh, mats;
-const parts = [], drops = [], flakes = [], anims = new Map(), lanternGlows = [], clouds = [], colliders = [], balloons = [];
+const parts = [], drops = [], flakes = [], anims = new Map(), lanternGlows = [], colliders = [], balloons = [];
 let market = null;
 const shopBoxes = {};
 let playerMeshes = [];
@@ -60,8 +58,8 @@ export function init(host) {
   plants = new Batcher(scene, mats.vox);
   fruits = new Batcher(scene, mats.vox);
   partMesh = new T.InstancedMesh(M.cubeGeo(), mats.basic, 900); partMesh.setColorAt(0, new T.Color(1, 1, 1)); partMesh.count = 0; partMesh.frustumCulled = false; scene.add(partMesh);
-  rainMesh = new T.InstancedMesh(new T.BoxGeometry(0.18, 2.4, 0.18), new T.MeshBasicMaterial({ color: 0xd8ecff, transparent: true, opacity: 0.6 }), 1200); rainMesh.count = 0; rainMesh.frustumCulled = false; scene.add(rainMesh);
-  snowMesh = new T.InstancedMesh(new T.BoxGeometry(0.4, 0.4, 0.4), new T.MeshBasicMaterial({ color: 0xffffff }), 500); snowMesh.count = 0; snowMesh.frustumCulled = false; scene.add(snowMesh);
+  rainMesh = new T.InstancedMesh(new T.BoxGeometry(0.18, 2.4, 0.18), new T.MeshBasicMaterial({ color: 0x8cb0dc, transparent: true, opacity: 0.6 }), 1200); rainMesh.count = 0; rainMesh.frustumCulled = false; scene.add(rainMesh);
+  snowMesh = new T.InstancedMesh(new T.BoxGeometry(0.4, 0.4, 0.4), new T.MeshBasicMaterial({ color: 0xdce8f8 }), 500); snowMesh.count = 0; snowMesh.frustumCulled = false; scene.add(snowMesh);
   trailMesh = new T.InstancedMesh(new T.BoxGeometry(1.3, 0.35, 1.3), new T.MeshBasicMaterial({ color: 0xfff27a, transparent: true, opacity: 0.95 }), 120); trailMesh.count = 0; trailMesh.frustumCulled = false; scene.add(trailMesh);
   // the player
   W.player = { x: HOME.x, y: 1, z: HOME.z, dir: Math.PI, walk: 0, moving: 0, act: 0, vx: 0, vz: 0 };
@@ -78,11 +76,6 @@ export function init(host) {
   ghostRing = new T.Mesh(new T.RingGeometry(1, 1.5, 24), new T.MeshBasicMaterial({ color: 0xff6a6a, transparent: true, opacity: 0.9, side: T.DoubleSide, depthWrite: false }));
   ghostRing.rotation.x = -Math.PI / 2; ghostRing.visible = false; scene.add(ghostRing);
   bolt = new T.Mesh(M.boltGeo(60), mats.basic); bolt.visible = false; scene.add(bolt);
-  for (let k = 0; k < 6; k++) {
-    const c = new T.Mesh(M.cloudGeo(k % 3), new T.MeshLambertMaterial({ vertexColors: true, color: 0xffffff }));
-    c.position.set(-120 + k * 45 + Math.random() * 20, 46 + (k % 3) * 4, -100 + Math.random() * 180); c.userData.v = 1.5 + Math.random();
-    scene.add(c); clouds.push(c);
-  }
   buildMarket();
   on('reset', () => anims.clear());
   snapCamera();
@@ -90,8 +83,7 @@ export function init(host) {
 
 // The flat ground is one big square with a texel per voxel; only blocks that stick up are meshed.
 const GROUND = 256;
-const inLawn = (x, z) => inRect(LAWN, x, z);
-const onGround = (x, y, z) => y <= 0 && inLawn(x, z);
+const onGround = (x, y) => y <= 0;
 const tiled = (x, z) => (x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1) || (Math.abs(x) <= 3 && z > PLAZA.z1 && z < -26);
 function groundColor(x, z) {
   if (tiled(x, z)) {
@@ -99,8 +91,7 @@ function groundColor(x, z) {
     return shade(hash(x, z) < 0.08 ? '#c8ae86' : tile ? '#ead6b0' : '#e0c9a0', 1 + (hash(x, z, 11) - 0.5) * 0.06);
   }
   if (onAnyBed(x, z)) return hex('#6a4228');
-  // a freshly mowed lawn: broad light and dark stripes
-  return shade(Math.floor((x + 1024) / 4) & 1 ? '#80d070' : '#72c464', 1 + (hash(x, z, 11) - 0.5) * 0.05);
+  return 0xffffff;
 }
 function buildTerrain() {
   const V = new Vox(rng(12));
@@ -115,19 +106,13 @@ function buildTerrain() {
   // kerb around the plaza (open where the path comes in)
   for (let x = PLAZA.x0 - 1; x <= PLAZA.x1 + 1; x++) for (const z of [PLAZA.z0 - 1, PLAZA.z1 + 1]) if (Math.abs(x) > 3 || z === PLAZA.z0 - 1) V.set(x, 1, z, '#c8b48a', 0.03);
   for (let z = PLAZA.z0; z <= PLAZA.z1; z++) for (const x of [PLAZA.x0 - 1, PLAZA.x1 + 1]) V.set(x, 1, z, '#c8b48a', 0.03);
-  // the edge of the lawn: grass on top, then layers of soil and stone underneath
-  const E = new Vox(rng(14));
-  for (let x = LAWN.x0; x <= LAWN.x1; x++) for (let z = LAWN.z0; z <= LAWN.z1; z++) {
-    if (x !== LAWN.x0 && x !== LAWN.x1 && z !== LAWN.z0 && z !== LAWN.z1) continue;
-    for (let y = -6; y <= 0; y++) E.set(x, y, z, y === 0 ? (Math.floor((x + 1024) / 4) & 1 ? '#80d070' : '#72c464') : y === -1 ? '#5aa850' : y > -4 ? '#9a6a44' : y > -6 ? '#7e5236' : '#8a8494', 0.05);
-  }
-  // paint the lawn, with a soft contact shadow around everything that sticks up
+  // paint the floor, with a soft contact shadow around everything that sticks up
   const N = GROUND, H = N / 2, c = document.createElement('canvas');
   c.width = c.height = N;
   const g = c.getContext('2d'), img = g.createImageData(N, N), d = img.data, dark = new Float32Array(N * N).fill(1);
   for (const [x, , z] of V.m.values()) for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
     const i = (z + dz + H) * N + (x + dx + H);
-    if (i >= 0 && i < N * N) dark[i] = Math.min(dark[i], dx && dz ? 0.9 : 0.8);
+    if (i >= 0 && i < N * N) dark[i] = Math.min(dark[i], dx && dz ? 0.93 : 0.86);
   }
   for (let pz = 0; pz < N; pz++) for (let px = 0; px < N; px++) {
     const col = groundColor(px - H, pz - H), k = dark[pz * N + px], i = (pz * N + px) * 4;
@@ -137,26 +122,19 @@ function buildTerrain() {
   const tex = new T.CanvasTexture(c);
   // crisp squares up close, smooth far away (no anisotropy: it blurs nearest filtering on many GPUs)
   tex.encoding = T.sRGBEncoding; tex.magFilter = T.NearestFilter; tex.minFilter = T.LinearMipmapLinearFilter;
-  // one square over the inside of the lawn (the edge cells draw their own tops), uv'd one texel per cell
-  const x0 = LAWN.x0 + 0.5, x1 = LAWN.x1 - 0.5, z0 = LAWN.z0 + 0.5, z1 = LAWN.z1 - 0.5;
-  const geo = new T.PlaneGeometry(x1 - x0, z1 - z0);
-  geo.rotateX(-Math.PI / 2); geo.translate((x0 + x1) / 2, 1, (z0 + z1) / 2);
+  // one big square floor, a texel per cell in the middle; past the texture's white edge it stays white
+  const geo = new T.PlaneGeometry(1024, 1024);
+  geo.rotateX(-Math.PI / 2); geo.translate(-0.5, 1, -0.5);
   const pos = geo.attributes.position, uv = geo.attributes.uv;
   for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + H + 0.5) / N, 1 - (pos.getZ(i) + H + 0.5) / N);
   const ground = new T.Mesh(geo, new T.MeshLambertMaterial({ map: tex }));
   ground.receiveShadow = true;
   scene.add(ground);
   for (const geo2 of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo2, mats.vox); m.receiveShadow = true; scene.add(m); }
-  for (const geo2 of chunks(E, 64, { solid: onGround })) { const m = new T.Mesh(geo2, mats.vox); m.receiveShadow = true; scene.add(m); }
 }
 
 function buildProps() {
-  const V = new Vox(rng(77)), R = rng(5);
-  const tree = (x, z) => { M.drawTree(V, x, 1, z, Math.floor(R() * 8)); colliders.push({ x, z, r: 1.6 }); };
-  // a row of trees all the way round the edge of the lawn, and an avenue along the path to the plaza
-  for (let x = LAWN.x0 + 6; x <= LAWN.x1 - 6; x += 12) { tree(x, LAWN.z0 + 6); tree(x, LAWN.z1 - 6); }
-  for (let z = LAWN.z0 + 18; z <= LAWN.z1 - 18; z += 12) { tree(LAWN.x0 + 6, z); tree(LAWN.x1 - 6, z); }
-  for (const z of [-38, -46]) for (const x of [-10, 10]) tree(x, z);
+  const V = new Vox(rng(77));
   // lamps along the path, round the plaza and at the front corners of your garden
   const lamps = [[-7, -30], [PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [BED.x0 - 4, BED.z1 + 4], [BED.x1 + 4, BED.z1 + 4]];
   for (const [x, z] of lamps) { M.drawLamp(V, x, 1, z); colliders.push({ x, z, r: 0.8 }); addGlow(x, 10.5, z, 0xffd27a, 16); addLampHead(x, 9.5, z); }
@@ -534,13 +512,8 @@ export function update(dt, input = { x: 0, y: 0 }) {
   lerpCol(a[1], b[1], tt, sun.color); sun.intensity = (a[2] + (b[2] - a[2]) * tt) * (1 - env.rain * 0.45 - env.storm * 0.25) + env.flash * 2;
   lerpCol(a[3], b[3], tt, hemi.color); hemi.intensity = (a[4] + (b[4] - a[4]) * tt) * (1 - env.rain * 0.15) + env.flash;
   if (bloodMoon()) { sun.color.lerp(ca.set('#ff5060'), env.night * 0.6); hemi.color.lerp(ca.set('#a04050'), env.night * 0.5); }
-  hemi.groundColor.set(env.night > 0.5 ? '#202840' : '#6a8a5a');
+  hemi.groundColor.set(env.night > 0.5 ? '#202840' : '#c8c8d0');
   drawSky(d, dt);
-  for (const c of clouds) {
-    c.position.x += c.userData.v * dt * (1 + env.rain * 1.5);
-    if (c.position.x > 150) { c.position.x = -150; c.position.z = -100 + Math.random() * 180; }
-    c.material.color.set(env.rain > 0.4 ? 0x8a8ea8 : 0xffffff);
-  }
   const glowOn = Math.max(env.night, env.storm * 0.5);
   lanternGlows.forEach((gl) => { gl.material.opacity = glowOn * (0.8 + Math.sin(t * 3) * 0.05); gl.visible = gl.material.opacity > 0.02; });
   // Market Day dressing
