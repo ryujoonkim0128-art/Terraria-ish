@@ -69,23 +69,15 @@ const B = {
     }
   },
   strawberry(V, s) {
-    // a low rosette of three-leaflet leaves, white flowers, and stalks that hold the berries up over the leaves
-    const R = 1 + 1.6 * s, h = 1 + Math.round(2.5 * s), big = s > 0.6;
+    // a neat rosette of four leaves with white flowers on top; the berries rest on the soil round the edge
+    const R = 1 + Math.round(s), h = 1 + Math.round(s), r = s > 0.6 ? 1 : 0;
     V.set(0, 0, 0, '#3f8f42');
-    for (let k = 0; k < 5; k++) {
-      const a = (k / 5) * Math.PI * 2 + 0.3, end = [Math.cos(a) * R, h, Math.sin(a) * R];
-      seg(V, [0, 0, 0], end, '#5aa848');
-      for (const da of [-1, 0, 1]) {
-        const b = a + da * 0.85, c = [end[0] + Math.cos(b) * (big ? 1.6 : 1), h + (da ? 0 : 1), end[2] + Math.sin(b) * (big ? 1.6 : 1)];
-        const col = k % 2 ? '#3f9e4a' : '#4aa84e';
-        if (big) for (const [dx, dz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) V.set(c[0] + dx, c[1], c[2] + dz, dx + dz > 0.5 ? '#78c860' : col, 0.04);
-        else V.set(c[0], c[1], c[2], col);
-      }
+    for (const [dx, dz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      seg(V, [0, 0, 0], [dx * R, h, dz * R], '#5aa848');
+      diamond(V, [dx * (R + 1), h + 1, dz * (R + 1)], r, '#4aa84e', '#7ccf62');
     }
-    if (s > 0.8) {
-      for (const a of [1.6, 4.7]) flower(V, [Math.round(Math.cos(a) * 3), h + 2, Math.round(Math.sin(a) * 3)], '#fffaf2');
-      for (const p of ANCHORS.strawberry.pts) { const m = [p[0] * 0.5, p[1] + 1, p[2] * 0.5]; seg(V, [0, 1, 0], m, '#6ab850'); seg(V, m, p, '#6ab850'); }
-    }
+    if (s > 0.6) { V.box(0, 1, 0, 0, h + 1, 0, '#5aa848'); flower(V, [0, h + 2, 0], '#ffffff'); }
+    if (s > 0.8) for (const [x, z] of [[-2, 2], [2, -2]]) flower(V, [x, h + 1, z], '#fff6f8');
   },
   blueberry(V, s) {
     // a little cloud-pruned bush: woody branches ending in flat leaf pads, the berries hang under the rims
@@ -248,7 +240,7 @@ function melonVine(V, s, vine, leaves, bloom, big) {
 const hangBeside = (pts) => pts.map(([cx, cy, cz, r, a = Math.atan2(cz || 1, cx)]) => [Math.round(cx + Math.cos(a) * (r + 0.8)), cy, Math.round(cz + Math.sin(a) * (r + 0.8))]);
 export const ANCHORS = {
   carrot: { sit: true, pts: [[0, -1, 0]] },
-  strawberry: { pts: [[3, 9, 3], [-4, 9, 1], [1, 9, -4]] },
+  strawberry: { sit: true, pts: [[4, 0, 0], [-4, 0, 0], [0, 0, 4]] },
   blueberry: { pts: BLUE.map(([x, y, z, r]) => { const a = Math.atan2(z || 1, x); return [Math.round(x + Math.cos(a) * (r + 0.5)), y, Math.round(z + Math.sin(a) * (r + 0.5))]; }) },
   tulip: { sit: true, pts: [[0, 8, 0]] },
   tomato: { pts: [[-2, 11, 2], [2, 8, 2], [-1, 5, 2]] },
@@ -465,7 +457,6 @@ export function drawLamp(V, x, y, z) {
   V.box(x - 1, y + 8, z - 1, x + 1, y + 8, z + 1, '#4a4462', 0.02);
   V.set(x, y + 9, z, '#4a4462', 0);
 }
-export function drawPost(V, x, y, z, h = 3) { V.box(x, y, z, x, y + h - 1, z, '#b8865a', 0.05); V.set(x, y + h, z, '#d8a878', 0.03); }
 export function drawBench(V, x, y, z) { V.box(x - 2, y + 1, z, x + 2, y + 1, z + 1, '#b8865a', 0.04); V.set(x - 2, y, z, '#7a5434'); V.set(x + 2, y, z, '#7a5434'); V.box(x - 2, y + 2, z, x + 2, y + 2, z, '#a8784a', 0.04); }
 export function drawFlowerbed(V, x, y, z, w = 4) {
   for (let dx = -w; dx <= w; dx++) for (let dz = -1; dz <= 1; dz++) {

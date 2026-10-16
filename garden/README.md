@@ -27,7 +27,7 @@ Add it to your home screen for fullscreen. Progress saves on the device.
 
 ## What's in it
 - 15 crops from Carrot to Beanstalk across 7 rarities, each a voxel model with 6 growth stages: feathery carrot
-  fronds, strawberries held up on stalks, a cloud-pruned blueberry bush, a blossoming apple tree, a grape pergola,
+  fronds, a little strawberry rosette with white flowers, a cloud-pruned blueberry bush, a blossoming apple tree, a grape pergola,
   a dragon fruit cactus draped over an old tyre, a beanstalk with a cloud on top. The starter crops are drawn small
   so a young garden stays neat. Berries, trees and vines keep fruiting; every fruit rolls its own size (giants are
   worth much more).
@@ -39,7 +39,7 @@ Add it to your home screen for fullscreen. Progress saves on the device.
   Wet, Chilled, Frozen, Shocked (lightning, x100), Moonlit, Bloodlit, plus rare Gold (x20) and Rainbow (x50).
 - A wordless tutorial: plant, grow, collect, sell, buy, go home. One objective chip, a bouncing arrow and
   glowing trail in the world, and a pointing hand that shows where to tap or which way to push the stick.
-- Two neighbouring gardens to walk past, and a market plaza with the Seeds and Sell stands.
+- A market plaza with the Seeds and Sell stands, up an avenue of trees from your garden.
 - Offline growth (up to 8 hours), autosave, generative music, sound effects and haptics.
 
 ## Code map
