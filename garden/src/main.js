@@ -15,7 +15,7 @@ const away = load();
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  const vw = window.innerWidth, vh = window.innerHeight;
+  const vw = document.body.clientWidth || window.innerWidth, vh = document.body.clientHeight || window.innerHeight;
   const cssW = Math.min(vw, Math.round(vh * 0.62));
   const Dw = Math.round(cssW * dpr), Dh = Math.round(vh * dpr);
   scale = Math.max(1, Math.min(Math.floor(Dw / 188), Math.floor(Dh / 352)));
