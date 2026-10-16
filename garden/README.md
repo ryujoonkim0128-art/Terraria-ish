@@ -51,4 +51,6 @@ decor, stalls, people, pets, icons · `src/world.js` map and ground rendering ·
 ## Tests
 `npm install`, then `node test/smoke.mjs` runs the game in headless Chromium: plants every crop, grows and
 mutates them through all weather, harvests, sells, hatches eggs, opens every panel, saves and reloads, and writes
-screenshots to `test/shots/`. `node test/sheet.mjs` renders every sprite to one sheet for art review.
+screenshots to `test/shots/`. `node test/play.mjs` plays through the real input path (keyboard walking to Sam,
+clicking Buy, planting with the mouse, fast-forwarding with T, harvesting, selling to Steven).
+`node test/sheet.mjs` renders every sprite to one sheet for art review.
