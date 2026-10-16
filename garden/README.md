@@ -1,8 +1,9 @@
 # Grow a Garden — voxel edition
 
-A mobile take on the Roblox game *Grow a Garden*, built as a little 3D voxel world. Walk your farmer around
-with a thumbstick, plant anywhere on your garden bed, watch crops grow (even while you're away), collect the
-fruit, then teleport to the Sell and Seeds stands.
+A mobile take on the Roblox game *Grow a Garden*, built as a little 3D voxel world: one tidy rectangle of mowed
+lawn floating on white, with your planter in the middle. Walk your farmer around with a thumbstick, plant anywhere
+in your garden bed, watch crops grow (even while you're away), collect the fruit, then teleport to the Sell and
+Seeds stands.
 
 No build step. Three.js r128 is vendored in `vendor/`; everything else is plain ES modules.
 
@@ -27,10 +28,11 @@ Add it to your home screen for fullscreen. Progress saves on the device.
 ## What's in it
 - 15 crops from Carrot to Beanstalk across 7 rarities, each a voxel model with 6 growth stages: feathery carrot
   fronds, strawberries held up on stalks, a cloud-pruned blueberry bush, a blossoming apple tree, a grape pergola,
-  a dragon fruit cactus draped over an old tyre, a beanstalk with a cloud on top. Berries, trees and vines keep
-  fruiting; every fruit rolls its own size (giants are worth much more).
-- A tight economy: a strawberry pays for itself in about a minute, a beanstalk in about a quarter of an hour, and
-  rare seeds rarely show up in the shop.
+  a dragon fruit cactus draped over an old tyre, a beanstalk with a cloud on top. The starter crops are drawn small
+  so a young garden stays neat. Berries, trees and vines keep fruiting; every fruit rolls its own size (giants are
+  worth much more).
+- A tight economy: a strawberry pays for itself in about a minute, a beanstalk in about a quarter of an hour.
+  Everything up to Apple is usually in stock; the top tiers sell out most restocks.
 - Market Day every twelve minutes: the plaza puts up a maypole and bunting, two pop-up carts sell rarer seeds at a
   quarter off, and one crop you grow sells for triple. A chip under the top buttons counts down and takes you there.
 - Weather and time: a day/night cycle with stars and lanterns, rain, snow and thunderstorms. They mutate fruit:

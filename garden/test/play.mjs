@@ -51,7 +51,7 @@ async function walkTo(tx, tz, stop = 3, maxSteps = 60) {
 }
 
 await page.click('#title button', { force: true });
-await page.waitForTimeout(300);
+await page.waitForFunction(() => !document.querySelector('#goal').hidden && !document.querySelector('#hand').hidden, null, { timeout: 8000 }).catch(() => {});
 let s = await G(() => ({ goal: !document.querySelector('#goal').hidden, hand: !document.querySelector('#hand').hidden, sel: window.game.G.sel, tp: document.querySelectorAll('#tp .tp').length }));
 check('title gone, goal + hand + teleports shown, carrot seeds in hand', s.goal && s.hand && s.sel === 'seed:carrot' && s.tp === 3, s);
 await shot('1_plant');

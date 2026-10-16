@@ -1,24 +1,25 @@
 // Game content: crops, mutations, weather and timing. All times in seconds, distances in voxels.
 
 export const RARITIES = {
-  common: { name: 'Common', col: '#c9c4d6', chance: 1, qty: [3, 6] },
-  uncommon: { name: 'Uncommon', col: '#7be36d', chance: 0.6, qty: [1, 3] },
-  rare: { name: 'Rare', col: '#62b3ff', chance: 0.35, qty: [1, 2] },
-  legendary: { name: 'Legendary', col: '#ffd23f', chance: 0.2, qty: [1, 1] },
-  mythical: { name: 'Mythical', col: '#d08bff', chance: 0.08, qty: [1, 1] },
-  divine: { name: 'Divine', col: '#ff9a4a', chance: 0.03, qty: [1, 1] },
-  prismatic: { name: 'Prismatic', col: '#ff8fd8', chance: 0.01, qty: [1, 1] },
+  common: { name: 'Common', col: '#c9c4d6', chance: 1, qty: [4, 8] },
+  uncommon: { name: 'Uncommon', col: '#7be36d', chance: 1, qty: [2, 4] },
+  rare: { name: 'Rare', col: '#62b3ff', chance: 0.85, qty: [1, 3] },
+  legendary: { name: 'Legendary', col: '#ffd23f', chance: 0.6, qty: [1, 2] },
+  mythical: { name: 'Mythical', col: '#d08bff', chance: 0.3, qty: [1, 1] },
+  divine: { name: 'Divine', col: '#ff9a4a', chance: 0.12, qty: [1, 1] },
+  prismatic: { name: 'Prismatic', col: '#ff8fd8', chance: 0.05, qty: [1, 1] },
 };
 
 // multi: keeps fruiting after it is grown (n fruits, each regrows in `regrow`). r: room the plant needs.
+// size: how big the plant is drawn (the starter crops are kept small so a young garden stays tidy).
 // Tuned so a seed pays itself back in about a minute for strawberries and a quarter of an hour for a beanstalk.
 export const CROPS = [
-  { id: 'carrot', name: 'Carrot', rarity: 'common', price: 10, grow: 45, value: 15, kg: 0.24, r: 1.6 },
-  { id: 'strawberry', name: 'Strawberry', rarity: 'common', price: 50, grow: 90, multi: true, n: 3, regrow: 45, value: 12, kg: 0.29, r: 2.6 },
-  { id: 'blueberry', name: 'Blueberry', rarity: 'uncommon', price: 400, grow: 150, multi: true, n: 5, regrow: 60, value: 32, kg: 0.17, r: 3 },
-  { id: 'tulip', name: 'Orange Tulip', rarity: 'uncommon', price: 600, grow: 120, value: 900, kg: 0.05, r: 1.7 },
-  { id: 'tomato', name: 'Tomato', rarity: 'rare', price: 800, grow: 180, multi: true, n: 3, regrow: 75, value: 95, kg: 0.44, r: 2.8 },
-  { id: 'corn', name: 'Corn', rarity: 'rare', price: 1300, grow: 210, multi: true, n: 2, regrow: 90, value: 240, kg: 1.9, r: 2.8 },
+  { id: 'carrot', name: 'Carrot', rarity: 'common', price: 10, grow: 45, value: 15, kg: 0.24, r: 1.2, size: 0.68 },
+  { id: 'strawberry', name: 'Strawberry', rarity: 'common', price: 50, grow: 90, multi: true, n: 3, regrow: 45, value: 12, kg: 0.29, r: 1.9, size: 0.7 },
+  { id: 'blueberry', name: 'Blueberry', rarity: 'uncommon', price: 400, grow: 150, multi: true, n: 5, regrow: 60, value: 32, kg: 0.17, r: 2.3, size: 0.76 },
+  { id: 'tulip', name: 'Orange Tulip', rarity: 'uncommon', price: 600, grow: 120, value: 900, kg: 0.05, r: 1.3, size: 0.78 },
+  { id: 'tomato', name: 'Tomato', rarity: 'rare', price: 800, grow: 180, multi: true, n: 3, regrow: 75, value: 95, kg: 0.44, r: 2.3, size: 0.85 },
+  { id: 'corn', name: 'Corn', rarity: 'rare', price: 1300, grow: 210, multi: true, n: 2, regrow: 90, value: 240, kg: 1.9, r: 2.5, size: 0.88 },
   { id: 'watermelon', name: 'Watermelon', rarity: 'legendary', price: 2500, grow: 240, value: 4000, kg: 7.3, r: 4.2 },
   { id: 'pumpkin', name: 'Pumpkin', rarity: 'legendary', price: 3000, grow: 270, value: 4800, kg: 6.9, r: 4 },
   { id: 'apple', name: 'Apple', rarity: 'legendary', price: 3250, grow: 300, multi: true, n: 5, regrow: 100, value: 220, kg: 2.9, r: 5.2 },
@@ -68,12 +69,7 @@ export const RESTOCK = 300;
 export const BASKET = 200;
 export const MAX_PLANTS = 90;
 
-// the garden bed, in voxels
-export const BED = { rx: 27, rz: 28, top: 2 };
-export function bedR(a) { return 1 + 0.06 * Math.sin(3 * a + 0.5) + 0.04 * Math.sin(5 * a + 2) + 0.02 * Math.sin(9 * a); }
-export function inBed(x, z, margin = 0) {
-  const a = Math.atan2(z / BED.rz, x / BED.rx);
-  const r = bedR(a);
-  const d = Math.hypot(x / BED.rx, z / BED.rz);
-  return d < r - margin / BED.rx;
-}
+// the garden bed: a neat rectangle of soil cells, x0..x1 by z0..z1, its surface at height `top`
+export const BED = { x0: -24, x1: 24, z0: -24, z1: 26, top: 2 };
+export const inRect = (R, x, z, margin = 0) => x >= R.x0 - 0.5 + margin && x <= R.x1 + 0.5 - margin && z >= R.z0 - 0.5 + margin && z <= R.z1 + 0.5 - margin;
+export const inBed = (x, z, margin = 0) => inRect(BED, x, z, margin);

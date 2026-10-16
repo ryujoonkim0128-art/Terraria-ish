@@ -1,6 +1,6 @@
 // The 3D world: the map, a third-person camera that follows your farmer, movement and collisions,
 // neighbours, plants and fruit (instanced), weather, sky, effects and picking.
-import { CROP, BED, inBed, bedR } from './data.js';
+import { CROP, BED, inRect } from './data.js';
 import { G, on, marketOpen } from './state.js';
 import { dayFrac, bloodMoon } from './sim.js';
 import { Vox, mesh, chunks, rng, hash, hex, shade, Batcher } from './voxel.js';
@@ -18,14 +18,17 @@ export const SHOPS = {
 };
 export const HOME = { x: 0, z: 35 };
 const PLAZA = { x0: -40, x1: 40, z0: -92, z1: -50 };
-// two neighbouring gardens, fenced off, to walk past
-const NEIGHBORS = [{ x: -66, z: -4, rx: 18, rz: 20 }, { x: 66, z: -4, rx: 18, rz: 20 }];
+// two neighbouring gardens, fenced off, to walk past (rectangles of soil cells, like yours)
+const NEIGHBORS = [{ x0: -82, x1: -50, z0: -22, z1: 14 }, { x0: 50, x1: 82, z0: -22, z1: 14 }];
+// the whole map is one tidy rectangle of lawn floating on white
+const LAWN = { x0: -118, x1: 118, z0: -118, z1: 98 };
 // Market Day: two pop-up carts beside the stalls and a maypole in the middle of the plaza
 export const CARTS = { veg: { x: -31, z: -71 }, berry: { x: 31, z: -71 } };
 const MAYPOLE = { x: 0, z: -62 };
 export const BOUNDS = { x0: -112, x1: 112, z0: -112, z1: 92 };
-const inNb = (nb, x, z, m = 0) => { const dx = (x - nb.x) / nb.rx, dz = (z - nb.z) / nb.rz; return Math.hypot(dx, dz) < bedR(Math.atan2(dz, dx)) - m / nb.rx; };
-export const onAnyBed = (x, z) => inBed(x, z) || NEIGHBORS.some((nb) => inNb(nb, x, z));
+const PLOTS = [BED, ...NEIGHBORS];
+// the soil and the plank border round it both sit a step above the lawn
+export const onAnyBed = (x, z) => PLOTS.some((R) => inRect(R, x, z, -1));
 export const groundY = (x, z) => (onAnyBed(x, z) ? TOP : 1);
 
 let renderer, scene, cam, sun, hemi, skyC, skyG, plants, fruits, partMesh, rainMesh, snowMesh, trailMesh, arrow, ring, ghostRing, bolt, heldMesh, mats;
@@ -46,8 +49,8 @@ export function init(host) {
   W.renderer = renderer;
   host.appendChild(renderer.domElement);
   scene = new T.Scene();
-  scene.fog = new T.Fog(0xc8ecff, 80, 175);
-  cam = new T.PerspectiveCamera(62, 1, 0.5, 240);
+  scene.fog = new T.Fog(0xffffff, 110, 230);
+  cam = new T.PerspectiveCamera(62, 1, 0.5, 260);
   hemi = new T.HemisphereLight(0xffffff, 0x6a8a5a, 0.75); scene.add(hemi);
   sun = new T.DirectionalLight(0xfff2dc, 1.05);
   sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0012; sun.shadow.normalBias = 0.03;
@@ -90,40 +93,40 @@ export function init(host) {
 }
 
 // The flat ground is one big square with a texel per voxel; only blocks that stick up are meshed.
-const GROUND = 512;
-const onGround = (x, y) => y <= 0;
+const GROUND = 256;
+const inLawn = (x, z) => inRect(LAWN, x, z);
+const onGround = (x, y, z) => y <= 0 && inLawn(x, z);
+const tiled = (x, z) => (x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1) || (Math.abs(x) <= 3 && z > PLAZA.z1 && z < -26);
 function groundColor(x, z) {
-  const plaza = x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1;
-  const path = Math.abs(x) <= 3 && z > PLAZA.z1 && z < -26;
-  if (plaza || path) {
-    const tile = plaza ? ((Math.floor(x / 3) + Math.floor(z / 3)) & 1) : ((x + z) & 1);
+  if (tiled(x, z)) {
+    const plaza = x >= PLAZA.x0 && x <= PLAZA.x1, tile = plaza && z <= PLAZA.z1 ? ((Math.floor(x / 3) + Math.floor(z / 3)) & 1) : ((x + z) & 1);
     return shade(hash(x, z) < 0.08 ? '#c8ae86' : tile ? '#ead6b0' : '#e0c9a0', 1 + (hash(x, z, 11) - 0.5) * 0.06);
   }
   if (onAnyBed(x, z)) return hex('#6a4228');
-  const h = hash(x, z, 1);
-  return shade(h < 0.05 ? '#5aae58' : h > 0.97 ? '#8ad87a' : '#78cc6c', 1 + (hash(x, z, 11) - 0.5) * 0.12);
+  // a freshly mowed lawn: broad light and dark stripes
+  return shade(Math.floor((x + 1024) / 4) & 1 ? '#80d070' : '#72c464', 1 + (hash(x, z, 11) - 0.5) * 0.05);
 }
 function buildTerrain() {
   const V = new Vox(rng(12));
-  for (let x = -132; x <= 132; x++) for (let z = -142; z <= 112; z++) {
-    const plaza = x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1;
-    const path = Math.abs(x) <= 3 && z > PLAZA.z1 && z < -26;
-    if (plaza || path) continue;
-    if (onAnyBed(x, z)) {
-      const edge = !onAnyBed(x, z - 1) || !onAnyBed(x - 1, z) || !onAnyBed(x + 1, z) || !onAnyBed(x, z + 1);
-      V.set(x, 1, z, edge ? '#a8744a' : hash(x, z, 3) < 0.15 ? '#7e4e30' : '#8e5c3a', 0.06);
-      continue;
+  // planters: soil, a plank border and a post at each corner
+  for (const R of PLOTS) {
+    for (let x = R.x0 - 1; x <= R.x1 + 1; x++) for (let z = R.z0 - 1; z <= R.z1 + 1; z++) {
+      if (inRect(R, x, z)) { V.set(x, 1, z, hash(x, z, 3) < 0.15 ? '#7e4e30' : '#8e5c3a', 0.06); continue; }
+      const along = x === R.x0 - 1 || x === R.x1 + 1 ? z : x;
+      V.set(x, 1, z, Math.floor((along + 64) / 3) & 1 ? '#c8945e' : '#b8844e', 0.03);
     }
-    const h = hash(x, z, 1);
-    const nearBed = onAnyBed(x + 1, z) || onAnyBed(x - 1, z) || onAnyBed(x, z + 1) || onAnyBed(x, z - 1);
-    if (nearBed && hash(x, z, 7) < 0.5) V.set(x, 1, z, hash(x, z, 8) < 0.5 ? '#b8b4c4' : '#9a96a8', 0.05);
-    else if (!nearBed && h > 0.988) V.set(x, 1, z, ['#ffffff', '#ffd84e', '#ff8ab0', '#a8c8ff'][Math.floor(hash(x, z, 9) * 4)], 0);
-    else if (!nearBed && h < 0.01) V.set(x, 1, z, '#5cb860', 0.05);
+    for (const x of [R.x0 - 1, R.x1 + 1]) for (const z of [R.z0 - 1, R.z1 + 1]) { V.set(x, 2, z, '#8a5a3a', 0.02); V.set(x, 3, z, '#a87048', 0.02); }
   }
   // kerb around the plaza (open where the path comes in)
   for (let x = PLAZA.x0 - 1; x <= PLAZA.x1 + 1; x++) for (const z of [PLAZA.z0 - 1, PLAZA.z1 + 1]) if (Math.abs(x) > 3 || z === PLAZA.z0 - 1) V.set(x, 1, z, '#c8b48a', 0.03);
   for (let z = PLAZA.z0; z <= PLAZA.z1; z++) for (const x of [PLAZA.x0 - 1, PLAZA.x1 + 1]) V.set(x, 1, z, '#c8b48a', 0.03);
-  // paint the ground, with a soft contact shadow around everything that sticks up
+  // the edge of the lawn: grass on top, then layers of soil and stone underneath
+  const E = new Vox(rng(14));
+  for (let x = LAWN.x0; x <= LAWN.x1; x++) for (let z = LAWN.z0; z <= LAWN.z1; z++) {
+    if (x !== LAWN.x0 && x !== LAWN.x1 && z !== LAWN.z0 && z !== LAWN.z1) continue;
+    for (let y = -6; y <= 0; y++) E.set(x, y, z, y === 0 ? (Math.floor((x + 1024) / 4) & 1 ? '#80d070' : '#72c464') : y === -1 ? '#5aa850' : y > -4 ? '#9a6a44' : y > -6 ? '#7e5236' : '#8a8494', 0.05);
+  }
+  // paint the lawn, with a soft contact shadow around everything that sticks up
   const N = GROUND, H = N / 2, c = document.createElement('canvas');
   c.width = c.height = N;
   const g = c.getContext('2d'), img = g.createImageData(N, N), d = img.data, dark = new Float32Array(N * N).fill(1);
@@ -139,38 +142,41 @@ function buildTerrain() {
   const tex = new T.CanvasTexture(c);
   // crisp squares up close, smooth far away (no anisotropy: it blurs nearest filtering on many GPUs)
   tex.encoding = T.sRGBEncoding; tex.magFilter = T.NearestFilter; tex.minFilter = T.LinearMipmapLinearFilter;
-  const ground = new T.Mesh(new T.PlaneGeometry(N, N), new T.MeshLambertMaterial({ map: tex }));
-  ground.rotation.x = -Math.PI / 2; ground.position.set(-0.5, 1, -0.5); ground.receiveShadow = true;
+  // one square over the inside of the lawn (the edge cells draw their own tops), uv'd one texel per cell
+  const x0 = LAWN.x0 + 0.5, x1 = LAWN.x1 - 0.5, z0 = LAWN.z0 + 0.5, z1 = LAWN.z1 - 0.5;
+  const geo = new T.PlaneGeometry(x1 - x0, z1 - z0);
+  geo.rotateX(-Math.PI / 2); geo.translate((x0 + x1) / 2, 1, (z0 + z1) / 2);
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + H + 0.5) / N, 1 - (pos.getZ(i) + H + 0.5) / N);
+  const ground = new T.Mesh(geo, new T.MeshLambertMaterial({ map: tex }));
+  ground.receiveShadow = true;
   scene.add(ground);
-  for (const geo of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo, mats.vox); m.receiveShadow = true; scene.add(m); }
+  for (const geo2 of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo2, mats.vox); m.receiveShadow = true; scene.add(m); }
+  for (const geo2 of chunks(E, 64, { solid: onGround })) { const m = new T.Mesh(geo2, mats.vox); m.receiveShadow = true; scene.add(m); }
 }
 
 function buildProps() {
   const V = new Vox(rng(77)), R = rng(5);
-  const blocked = (x, z) =>
-    (Math.abs(x) < 36 && z > -36 && z < 80) || (Math.abs(x) < 8 && z > -54 && z < 60) ||
-    (x > PLAZA.x0 - 6 && x < PLAZA.x1 + 6 && z > PLAZA.z0 - 4 && z < PLAZA.z1 + 6) ||
-    NEIGHBORS.some((nb) => Math.hypot(x - nb.x, z - nb.z) < 27);
-  for (let gx = -126; gx <= 126; gx += 13) for (let gz = -136; gz <= 106; gz += 13) {
-    const x = Math.round(gx + (R() - 0.5) * 9), z = Math.round(gz + (R() - 0.5) * 9);
-    if (blocked(x, z) || R() < 0.15) continue;
-    M.drawTree(V, x, 1, z, Math.floor(R() * 8));
-    colliders.push({ x, z, r: 1.6 });
-  }
-  // lamps along the path and around the plaza
-  const lamps = [[-7, -30], [PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [-24, 31], [24, 31]];
+  const tree = (x, z) => { M.drawTree(V, x, 1, z, Math.floor(R() * 8)); colliders.push({ x, z, r: 1.6 }); };
+  // a row of trees all the way round the edge of the lawn, and an avenue along the path to the plaza
+  for (let x = LAWN.x0 + 6; x <= LAWN.x1 - 6; x += 12) { tree(x, LAWN.z0 + 6); tree(x, LAWN.z1 - 6); }
+  for (let z = LAWN.z0 + 18; z <= LAWN.z1 - 18; z += 12) { tree(LAWN.x0 + 6, z); tree(LAWN.x1 - 6, z); }
+  for (const z of [-38, -46]) for (const x of [-10, 10]) tree(x, z);
+  // lamps along the path, round the plaza and at the front corners of your garden
+  const lamps = [[-7, -30], [PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [BED.x0 - 4, BED.z1 + 4], [BED.x1 + 4, BED.z1 + 4]];
   for (const [x, z] of lamps) { M.drawLamp(V, x, 1, z); colliders.push({ x, z, r: 0.8 }); addGlow(x, 10.5, z, 0xffd27a, 16); addLampHead(x, 9.5, z); }
   // plaza dressing
   for (const [x, z] of [[-30, -60], [30, -60], [-30, -82], [30, -82]]) { M.drawFlowerbed(V, x, 1, z, 5); colliders.push({ x0: x - 5.5, x1: x + 5.5, z0: z - 1.5, z1: z + 1.5 }); }
   for (const [x, z] of [[-22, -54], [22, -54]]) { M.drawBench(V, x, 1, z); colliders.push({ x0: x - 2.5, x1: x + 2.5, z0: z - 0.5, z1: z + 1.5 }); }
   M.drawFlowerbed(V, 0, 1, -86, 8);
   colliders.push({ x0: -8.5, x1: 8.5, z0: -87.5, z1: -84.5 });
-  // fence posts around the neighbours' plots
-  for (const nb of NEIGHBORS) for (let a = 0; a < Math.PI * 2; a += 0.21) {
-    const r = bedR(a) + 3 / nb.rx;
-    M.drawPost(V, Math.round(nb.x + Math.cos(a) * nb.rx * r), 1, Math.round(nb.z + Math.sin(a) * nb.rz * r), 3);
+  // straight fences round the neighbours' plots
+  for (const nb of NEIGHBORS) {
+    const fx0 = nb.x0 - 3, fx1 = nb.x1 + 3, fz0 = nb.z0 - 3, fz1 = nb.z1 + 3;
+    for (let x = fx0; x <= fx1; x += 3) { M.drawPost(V, x, 1, fz0, 3); M.drawPost(V, x, 1, fz1, 3); }
+    for (let z = fz0 + 3; z < fz1; z += 3) { M.drawPost(V, fx0, 1, z, 3); M.drawPost(V, fx1, 1, z, 3); }
   }
-  // signposts
+  // signpost
   V.box(-16, 1, 32, -16, 4, 32, '#8a5a3a', 0.03); V.box(-10, 1, 32, -10, 4, 32, '#8a5a3a', 0.03);
   for (const geo of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo, mats.vox); m.castShadow = true; m.receiveShadow = true; scene.add(m); }
   sign('YOUR GARDEN', -12.5, 5.6, 32.6, 8, '#c8904a');
@@ -235,8 +241,8 @@ function buildNeighbors() {
     const placed = [];
     for (let k = 0; k < 80 && placed.length < 11; k++) {
       const c = pool[Math.floor(R() * pool.length)], cr = CROP[c];
-      const x = Math.round(nb.x + (R() - 0.5) * nb.rx * 1.6), z = Math.round(nb.z + (R() - 0.5) * nb.rz * 1.6);
-      if (!inNb(nb, x, z, cr.r * 0.6)) continue;
+      const x = Math.round(nb.x0 + R() * (nb.x1 - nb.x0)), z = Math.round(nb.z0 + R() * (nb.z1 - nb.z0));
+      if (!inRect(nb, x, z, cr.r * 0.6)) continue;
       if (placed.some((p) => Math.hypot(p.x - x, p.z - z) < (cr.r + CROP[p.c].r) * 0.7)) continue;
       const fr = cr.multi ? Array.from({ length: cr.n }, () => ({ p: R() < 0.8 ? 1 : 0.6, s: 0.9 + R() * 0.4, m: R() < 0.06 ? ['gold'] : [] })) : [{ p: 1, s: 0.9 + R() * 0.3, m: [] }];
       placed.push({ id: 10000 + ni * 100 + k, c, x, z, g: cr.grow, v: Math.floor(R() * 3), rot: Math.floor(R() * 4), fr });
@@ -376,7 +382,7 @@ export function pickPlant(sx, sy) {
   setRay(sx, sy);
   let best = null, bd = 1e9;
   for (const pl of G.plants) {
-    const st = M.stageOf(Math.min(1, growth(pl))), h = M.plantHeight(pl.c, st), r = Math.max(1.4, Math.min(CROP[pl.c].r, h * 0.6));
+    const st = M.stageOf(Math.min(1, growth(pl))), h = plantH(pl, st), r = Math.max(1.4, Math.min(CROP[pl.c].r, h * 0.6));
     box.set(bmin.set(pl.x - r, TOP, pl.z - r), bmax.set(pl.x + r, TOP + h + 0.5, pl.z + r));
     const hit = ray.ray.intersectBox(box, hitP);
     if (hit) { const d = hit.distanceTo(cam.position); if (d < bd) { bd = d; best = pl; } }
@@ -399,7 +405,8 @@ export function pickFruit(sx, sy) {
 export function pickShop(sx, sy) { setRay(sx, sy); for (const k in shopBoxes) if (ray.ray.intersectsBox(shopBoxes[k])) return k; return null; }
 const _v = new T.Vector3();
 export function project(x, y, z) { _v.set(x, y, z).project(cam); return { x: ((_v.x + 1) / 2) * screen.w, y: ((1 - _v.y) / 2) * screen.h, behind: _v.z > 1 }; }
-export const plantScreen = (pl, k = 0.5) => project(pl.x, TOP + M.plantHeight(pl.c, M.stageOf(Math.min(1, growth(pl)))) * k, pl.z);
+const plantH = (pl, st) => M.plantHeight(pl.c, st) * (CROP[pl.c].size || 1);
+export const plantScreen = (pl, k = 0.5) => project(pl.x, TOP + plantH(pl, M.stageOf(Math.min(1, growth(pl)))) * k, pl.z);
 
 // ---------------------------------------------------------------- effects API
 const PC = new T.Color();
@@ -429,7 +436,8 @@ export function setGuide(g) { guide = g; }
 
 // ---------------------------------------------------------------- sky and light
 const KEYS = [[0, '#f4b0a0', 0.55, '#a8b8e8', 0.5], [0.07, '#fff2dc', 1.05, '#e8f4ff', 0.75], [0.6, '#fff0d8', 1.0, '#eaf2ff', 0.72], [0.66, '#ffb070', 0.8, '#ffd0b0', 0.6], [0.73, '#7080d8', 0.32, '#5060a0', 0.38], [0.93, '#7080d8', 0.32, '#5060a0', 0.38], [0.98, '#ffb8a0', 0.55, '#a890c0', 0.5], [1, '#f4b0a0', 0.55, '#a8b8e8', 0.5]];
-const SKY = [[0, '#6878c8', '#f4c0a8'], [0.07, '#4aa8f4', '#d4f0ff'], [0.58, '#4aa0f4', '#cdeeff'], [0.65, '#5a60b8', '#ffb08a'], [0.73, '#0e1236', '#2a3070'], [0.93, '#0e1236', '#2a3070'], [0.975, '#3a3a80', '#c08aa0'], [1, '#6878c8', '#f4c0a8']];
+// a plain white backdrop that only warms at dawn and dusk and cools a little at night
+const SKY = [[0, '#fff2ea', '#fff6f0'], [0.07, '#ffffff', '#ffffff'], [0.58, '#ffffff', '#ffffff'], [0.65, '#fff0e4', '#fff5ec'], [0.73, '#e6e8f2', '#eceef5'], [0.93, '#e6e8f2', '#eceef5'], [0.975, '#f4ecf2', '#f8f1f4'], [1, '#fff2ea', '#fff6f0']];
 const ca = new T.Color(), cb = new T.Color(), cTop = new T.Color(), cBot = new T.Color();
 function key(keys, d) {
   for (let k = 0; k < keys.length - 1; k++) if (d >= keys[k][0] && d <= keys[k + 1][0]) return [keys[k], keys[k + 1], (d - keys[k][0]) / (keys[k + 1][0] - keys[k][0])];
@@ -437,41 +445,22 @@ function key(keys, d) {
 }
 const lerpCol = (a, b, t, out) => out.set(a).lerp(cb.set(b), t);
 function nightAmount(d) { if (d < 0.6) return 0; if (d < 0.74) return (d - 0.6) / 0.14; if (d < 0.93) return 1; return Math.max(0, 1 - (d - 0.93) / 0.07); }
-let skyKey = '', skyT = 0;
+let skyKey = '';
 function drawSky(d, dt) {
   const [a, b, t] = key(SKY, d);
   lerpCol(a[1], b[1], t, cTop); lerpCol(a[2], b[2], t, cBot);
   const gray = env.rain * 0.7, sn = env.snow * 0.5;
-  cTop.lerp(ca.set(env.storm > 0.3 ? '#3a4058' : '#7a8aa8'), gray).lerp(ca.set('#a8b8d0'), sn);
-  cBot.lerp(ca.set(env.storm > 0.3 ? '#6a7088' : '#b8c4d4'), gray).lerp(ca.set('#e0e8f4'), sn);
-  if (bloodMoon()) { cTop.lerp(ca.set('#3a0a1a'), env.night * 0.7); cBot.lerp(ca.set('#a02a3a'), env.night * 0.6); }
+  cTop.lerp(ca.set(env.storm > 0.3 ? '#c4c8d4' : '#e0e4ea'), gray).lerp(ca.set('#f4f7fb'), sn);
+  cBot.lerp(ca.set(env.storm > 0.3 ? '#cdd0da' : '#e6e9ee'), gray).lerp(ca.set('#f8fafc'), sn);
+  if (bloodMoon()) { cTop.lerp(ca.set('#f4dce2'), env.night * 0.7); cBot.lerp(ca.set('#f6e2e6'), env.night * 0.6); }
   scene.fog.color.copy(cBot).convertSRGBToLinear();
-  skyT += dt;
-  const k = cTop.getHexString() + cBot.getHexString() + Math.round(d * 400) + (env.flash > 0 ? env.flash.toFixed(2) : '');
-  if (k === skyKey && !(env.night > 0.05 && skyT > 0.12)) return;
-  skyKey = k; skyT = 0;
+  const k = cTop.getHexString() + cBot.getHexString();
+  if (k === skyKey) return;
+  skyKey = k;
   const g = skyG, w = screen.w, h = screen.h;
   const gr = g.createLinearGradient(0, 0, 0, h * 0.5);
   gr.addColorStop(0, '#' + cTop.getHexString()); gr.addColorStop(1, '#' + cBot.getHexString());
   g.fillStyle = gr; g.fillRect(0, 0, w, h);
-  if (env.night > 0.05) for (let s = 0; s < 70; s++) {
-    if (hash(s, 4) > env.night || Math.sin(W.t * (1 + hash(s, 3) * 3) + s) < 0.1) continue;
-    g.fillStyle = hash(s, 5) < 0.3 ? '#ffe8b0' : '#ffffff';
-    const z = hash(s, 6) < 0.15 ? 3 : 2;
-    g.fillRect(Math.floor(hash(s, 1) * w), Math.floor(hash(s, 2) * h * 0.35), z, z);
-  }
-  const arc = (u) => ({ x: w * 0.12 + u * w * 0.76, y: h * 0.2 - Math.sin(u * Math.PI) * h * 0.13 });
-  const body = (u, c, r, glowC) => {
-    const p = arc(u);
-    const gg = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 4); gg.addColorStop(0, glowC); gg.addColorStop(1, 'rgba(255,255,255,0)');
-    g.globalAlpha = 1 - env.rain * 0.8; g.fillStyle = gg; g.fillRect(p.x - r * 4, p.y - r * 4, r * 8, r * 8);
-    g.fillStyle = c; g.fillRect(Math.round(p.x - r), Math.round(p.y - r), r * 2, r * 2);
-    g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(Math.round(p.x - r), Math.round(p.y - r), r * 2, Math.round(r * 0.6));
-    g.globalAlpha = 1;
-  };
-  if (d < 0.7) body(Math.min(1, (d + 0.02) / 0.72), '#ffd84a', 14, 'rgba(255,240,180,0.55)');
-  if (d > 0.66 || d < 0.02) body(d > 0.66 ? (d - 0.66) / 0.34 : 1, bloodMoon() ? '#ff4a5a' : '#f2f0dc', 11, bloodMoon() ? 'rgba(255,60,80,0.4)' : 'rgba(200,210,255,0.4)');
-  if (env.flash > 0) { g.fillStyle = `rgba(255,255,255,${env.flash * 0.7})`; g.fillRect(0, 0, w, h); }
 }
 
 // ---------------------------------------------------------------- per frame
@@ -500,7 +489,8 @@ function drawPlants(list, live, dt, t) {
     const amp = (st >= 2 ? 0.035 : 0.015) * env.wind * (pl.c === 'mushroom' ? 0.3 : 1);
     e.set(Math.sin(t * 1.3 + pl.id) * amp * 0.6, pl.rot * Math.PI / 2, Math.sin(t * 1.7 + pl.id * 1.3) * amp);
     q.setFromEuler(e);
-    m4.compose(v3.set(pl.x, TOP, pl.z), q, s3.set(sc, sy, sc));
+    const k = c.size || 1;
+    m4.compose(v3.set(pl.x, TOP, pl.z), q, s3.set(sc * k, sy * k, sc * k));
     plants.add(`p|${pl.c}|${st}|${pl.v}`, () => M.plantGeo(pl.c, st, pl.v), m4);
     const A = M.ANCHORS[pl.c], ks = c.multi ? 1 : M.STAGE_S[st];
     if (live) pl._fw = pl._fw || [];
