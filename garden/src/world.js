@@ -134,8 +134,8 @@ function buildTerrain() {
   }
   g.putImageData(img, 0, 0);
   const tex = new T.CanvasTexture(c);
+  // crisp squares up close, smooth far away (no anisotropy: it blurs nearest filtering on many GPUs)
   tex.encoding = T.sRGBEncoding; tex.magFilter = T.NearestFilter; tex.minFilter = T.LinearMipmapLinearFilter;
-  tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const ground = new T.Mesh(new T.PlaneGeometry(N, N), new T.MeshLambertMaterial({ map: tex }));
   ground.rotation.x = -Math.PI / 2; ground.position.set(-0.5, 1, -0.5); ground.receiveShadow = true;
   scene.add(ground);
