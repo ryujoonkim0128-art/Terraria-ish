@@ -1,34 +1,37 @@
 // Game content: crops, mutations, weather and timing. All times in seconds, distances in voxels.
 
 export const RARITIES = {
-  common: { name: 'Common', col: '#c9c4d6', chance: 1, qty: [4, 9] },
-  uncommon: { name: 'Uncommon', col: '#7be36d', chance: 0.75, qty: [2, 5] },
-  rare: { name: 'Rare', col: '#62b3ff', chance: 0.5, qty: [1, 3] },
-  legendary: { name: 'Legendary', col: '#ffd23f', chance: 0.3, qty: [1, 2] },
-  mythical: { name: 'Mythical', col: '#d08bff', chance: 0.14, qty: [1, 2] },
-  divine: { name: 'Divine', col: '#ff9a4a', chance: 0.06, qty: [1, 1] },
-  prismatic: { name: 'Prismatic', col: '#ff8fd8', chance: 0.025, qty: [1, 1] },
+  common: { name: 'Common', col: '#c9c4d6', chance: 1, qty: [3, 6] },
+  uncommon: { name: 'Uncommon', col: '#7be36d', chance: 0.6, qty: [1, 3] },
+  rare: { name: 'Rare', col: '#62b3ff', chance: 0.35, qty: [1, 2] },
+  legendary: { name: 'Legendary', col: '#ffd23f', chance: 0.2, qty: [1, 1] },
+  mythical: { name: 'Mythical', col: '#d08bff', chance: 0.08, qty: [1, 1] },
+  divine: { name: 'Divine', col: '#ff9a4a', chance: 0.03, qty: [1, 1] },
+  prismatic: { name: 'Prismatic', col: '#ff8fd8', chance: 0.01, qty: [1, 1] },
 };
 
 // multi: keeps fruiting after it is grown (n fruits, each regrows in `regrow`). r: room the plant needs.
+// Tuned so a seed pays itself back in about a minute for strawberries and a quarter of an hour for a beanstalk.
 export const CROPS = [
-  { id: 'carrot', name: 'Carrot', rarity: 'common', price: 10, grow: 25, value: 20, kg: 0.24, r: 1.6 },
-  { id: 'strawberry', name: 'Strawberry', rarity: 'common', price: 50, grow: 40, multi: true, n: 3, regrow: 20, value: 16, kg: 0.29, r: 2.6 },
-  { id: 'blueberry', name: 'Blueberry', rarity: 'uncommon', price: 350, grow: 60, multi: true, n: 5, regrow: 25, value: 32, kg: 0.17, r: 3 },
-  { id: 'tulip', name: 'Orange Tulip', rarity: 'uncommon', price: 500, grow: 50, value: 1200, kg: 0.05, r: 1.7 },
-  { id: 'tomato', name: 'Tomato', rarity: 'rare', price: 800, grow: 80, multi: true, n: 3, regrow: 30, value: 60, kg: 0.44, r: 2.8 },
-  { id: 'corn', name: 'Corn', rarity: 'rare', price: 1300, grow: 90, multi: true, n: 2, regrow: 35, value: 140, kg: 1.9, r: 2.8 },
-  { id: 'watermelon', name: 'Watermelon', rarity: 'legendary', price: 2500, grow: 110, value: 6000, kg: 7.3, r: 4.2 },
-  { id: 'pumpkin', name: 'Pumpkin', rarity: 'legendary', price: 3000, grow: 120, value: 7500, kg: 6.9, r: 4 },
-  { id: 'apple', name: 'Apple', rarity: 'legendary', price: 3250, grow: 150, multi: true, n: 5, regrow: 40, value: 250, kg: 2.9, r: 5.2 },
-  { id: 'coconut', name: 'Coconut', rarity: 'mythical', price: 6000, grow: 180, multi: true, n: 3, regrow: 50, value: 1000, kg: 5.8, r: 4.5 },
-  { id: 'dragonfruit', name: 'Dragon Fruit', rarity: 'mythical', price: 50000, grow: 200, multi: true, n: 3, regrow: 55, value: 4500, kg: 11.4, r: 4 },
-  { id: 'mango', name: 'Mango', rarity: 'mythical', price: 100000, grow: 240, multi: true, n: 4, regrow: 60, value: 6000, kg: 14.3, r: 5.4 },
-  { id: 'grape', name: 'Grape', rarity: 'divine', price: 850000, grow: 300, multi: true, n: 4, regrow: 70, value: 40000, kg: 2.9, r: 4.4 },
-  { id: 'mushroom', name: 'Mushroom', rarity: 'divine', price: 150000, grow: 220, value: 450000, kg: 25.9, r: 4.2 },
-  { id: 'beanstalk', name: 'Beanstalk', rarity: 'prismatic', price: 10000000, grow: 400, multi: true, n: 3, regrow: 90, value: 300000, kg: 9.5, r: 3.6 },
+  { id: 'carrot', name: 'Carrot', rarity: 'common', price: 10, grow: 45, value: 15, kg: 0.24, r: 1.6 },
+  { id: 'strawberry', name: 'Strawberry', rarity: 'common', price: 50, grow: 90, multi: true, n: 3, regrow: 45, value: 12, kg: 0.29, r: 2.6 },
+  { id: 'blueberry', name: 'Blueberry', rarity: 'uncommon', price: 400, grow: 150, multi: true, n: 5, regrow: 60, value: 32, kg: 0.17, r: 3 },
+  { id: 'tulip', name: 'Orange Tulip', rarity: 'uncommon', price: 600, grow: 120, value: 900, kg: 0.05, r: 1.7 },
+  { id: 'tomato', name: 'Tomato', rarity: 'rare', price: 800, grow: 180, multi: true, n: 3, regrow: 75, value: 95, kg: 0.44, r: 2.8 },
+  { id: 'corn', name: 'Corn', rarity: 'rare', price: 1300, grow: 210, multi: true, n: 2, regrow: 90, value: 240, kg: 1.9, r: 2.8 },
+  { id: 'watermelon', name: 'Watermelon', rarity: 'legendary', price: 2500, grow: 240, value: 4000, kg: 7.3, r: 4.2 },
+  { id: 'pumpkin', name: 'Pumpkin', rarity: 'legendary', price: 3000, grow: 270, value: 4800, kg: 6.9, r: 4 },
+  { id: 'apple', name: 'Apple', rarity: 'legendary', price: 3250, grow: 300, multi: true, n: 5, regrow: 100, value: 220, kg: 2.9, r: 5.2 },
+  { id: 'coconut', name: 'Coconut', rarity: 'mythical', price: 6000, grow: 360, multi: true, n: 3, regrow: 120, value: 650, kg: 5.8, r: 4.5 },
+  { id: 'dragonfruit', name: 'Dragon Fruit', rarity: 'mythical', price: 50000, grow: 420, multi: true, n: 3, regrow: 140, value: 4800, kg: 11.4, r: 4 },
+  { id: 'mango', name: 'Mango', rarity: 'mythical', price: 100000, grow: 480, multi: true, n: 4, regrow: 150, value: 6900, kg: 14.3, r: 5.4 },
+  { id: 'grape', name: 'Grape', rarity: 'divine', price: 850000, grow: 600, multi: true, n: 4, regrow: 180, value: 52000, kg: 2.9, r: 4.4 },
+  { id: 'mushroom', name: 'Mushroom', rarity: 'divine', price: 150000, grow: 480, value: 300000, kg: 25.9, r: 4.2 },
+  { id: 'beanstalk', name: 'Beanstalk', rarity: 'prismatic', price: 10000000, grow: 900, multi: true, n: 3, regrow: 240, value: 650000, kg: 9.5, r: 3.6 },
 ];
 export const CROP = Object.fromEntries(CROPS.map((c) => [c.id, c]));
+const PLURAL = { Strawberry: 'Strawberries', Blueberry: 'Blueberries', Tomato: 'Tomatoes', Mango: 'Mangoes', Corn: 'Corn', 'Dragon Fruit': 'Dragon Fruit', Beanstalk: 'Beanstalk beans' };
+export const plural = (id) => PLURAL[CROP[id].name] || CROP[id].name + 's';
 
 // Environmental mutations add together; growth mutations (gold, rainbow) multiply.
 export const MUTS = {
@@ -62,7 +65,7 @@ export const WEATHER = {
 export const DAY_LEN = 600;
 export const NIGHT_START = 0.68, NIGHT_END = 0.96;
 export const RESTOCK = 300;
-export const BASKET = 300;
+export const BASKET = 200;
 export const MAX_PLANTS = 90;
 
 // the garden bed, in voxels

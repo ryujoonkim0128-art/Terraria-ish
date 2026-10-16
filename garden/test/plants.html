@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Crop preview</title>
+<style>html, body { margin: 0; background: #bfe6ff; } canvas { display: block; }</style>
+</head>
+<body>
+<!-- Every crop at chosen growth stages, lit like the game: test/plants.html?crops=apple,corn&stages=2,3,4,5 -->
+<script src="../vendor/three.min.js"></script>
+<script type="module">
+import { CROPS, CROP } from '../src/data.js';
+import * as M from '../src/models.js';
+const T = window.THREE;
+const q = new URLSearchParams(location.search);
+const crops = (q.get('crops') || CROPS.map((c) => c.id).join(',')).split(',');
+const stages = (q.get('stages') || '5').split(',').map(Number);
+const cols = +(q.get('cols') || Math.min(5, crops.length * stages.length)), gap = +(q.get('gap') || 15);
+const W = innerWidth, H = innerHeight, yaw = +(q.get('yaw') || 0), pitch = +(q.get('pitch') || 0.72), zoom = +(q.get('zoom') || 1);
+const r = new T.WebGLRenderer({ antialias: true });
+r.setPixelRatio(devicePixelRatio); r.setSize(W, H); r.outputEncoding = T.sRGBEncoding;
+r.shadowMap.enabled = true; r.shadowMap.type = T.PCFSoftShadowMap;
+document.body.appendChild(r.domElement);
+const scene = new T.Scene();
+scene.background = new T.Color('#bfe6ff');
+scene.add(new T.HemisphereLight(0xe8f4ff, 0x6a8a5a, 0.75));
+const sun = new T.DirectionalLight(0xfff2dc, 1.05);
+sun.position.set(-40, 90, 45); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -120, right: 120, top: 120, bottom: -120, near: 1, far: 400 });
+sun.shadow.bias = -0.0012; sun.shadow.normalBias = 0.03;
+scene.add(sun);
+const mat = new T.MeshLambertMaterial({ vertexColors: true });
+const items = [];
+for (const c of crops) for (const st of stages) items.push([c, st]);
+const rows = Math.ceil(items.length / cols);
+const soil = new T.Mesh(new T.PlaneGeometry(cols * gap + 20, rows * gap + 20), new T.MeshLambertMaterial({ color: new T.Color('#8e5c3a').convertSRGBToLinear() }));
+soil.rotation.x = -Math.PI / 2; soil.receiveShadow = true; scene.add(soil);
+const P = [0, 0.15, 0.35, 0.6, 0.85, 1];
+items.forEach(([c, st], i) => {
+  const x = ((i % cols) - (cols - 1) / 2) * gap, z = (Math.floor(i / cols) - (rows - 1) / 2) * gap;
+  const pm = new T.Mesh(M.plantGeo(c, st, +(q.get('v') || 0)), mat);
+  pm.position.set(x, 0, z); pm.castShadow = pm.receiveShadow = true; scene.add(pm);
+  const crop = CROP[c], A = M.ANCHORS[c], ks = crop.multi ? 1 : M.STAGE_S[st];
+  const p = P[st];
+  const n = crop.multi ? (st === 5 ? crop.n : 0) : p >= 0.4 ? 1 : 0;
+  for (let k = 0; k < n; k++) {
+    const pt = A.pts[k % A.pts.length];
+    const kind = crop.multi ? 'r' : p < 0.75 ? 'u' : 'r';
+    const size = crop.multi ? 1 : 0.4 + 0.6 * p;
+    const fm = new T.Mesh(M.fruitGeo(c, kind), mat);
+    fm.position.set(x + pt[0] * ks, pt[1] * ks, z + pt[2] * ks); fm.scale.setScalar(size); fm.castShadow = true; scene.add(fm);
+  }
+});
+const cam = new T.PerspectiveCamera(36, W / H, 1, 2000);
+const span = Math.max(cols * gap * (H / W) * 1.15, rows * gap * 1.5, 26) / zoom;
+const dist = span / (2 * Math.tan((36 * Math.PI) / 360)) * 1.05;
+cam.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, Math.sin(pitch) * dist + 4, Math.cos(yaw) * Math.cos(pitch) * dist);
+cam.lookAt(0, 4, 0);
+r.render(scene, cam);
+document.title = 'ready';
+</script>
+</body>
+</html>

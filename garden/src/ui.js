@@ -1,11 +1,11 @@
 // DOM UI and controls: joystick + camera drag, tap to plant, Collect prompts, teleport buttons,
 // shop sheets, toasts, and the wordless tutorial.
-import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, inBed } from './data.js';
-import { G, on, plant, collect, sell, buySeed, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, itemKey, placeBlock, reset, save } from './state.js';
+import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, inBed, plural } from './data.js';
+import { G, on, plant, collect, sell, buySeed, buyWare, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, sellValue, marketOpen, itemKey, placeBlock, reset, save } from './state.js';
 import { speed, isNight, bloodMoon } from './sim.js';
 import * as Wd from './world.js';
 import { ICON } from './icons.js';
-import { sfx, initAudio, setSound, setMusic } from './audio.js';
+import { sfx, initAudio, setSound, setMusic, setFestival } from './audio.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -29,6 +29,7 @@ const SVG = {
   sprout: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 4h2v6H4zM1 1h3v1h1v2H2V2H1zM6 2h3v1H8v1H5V3h1z"/></svg>',
   coin: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M3 1h4v1h1v1h1v4H8v1H7v1H3V8H2V7H1V3h1V2h1z"/><path fill="rgba(0,0,0,0.22)" d="M4 3h2v4H4z"/></svg>',
   house: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 1h2v1h1v1h1v1h1v1H1V4h1V3h1V2h1zM2 5h6v4H6V7H4v2H2z"/></svg>',
+  tent: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 0h2v1h1v1h1v1h1v1h1v1H0V4h1V3h1V2h1V1h1z"/><path fill="#ffd84e" d="M1 5h8v4H1z"/><path fill="#3a3a5a" d="M4 6h2v3H4z"/></svg>',
 };
 const WICON = {
   clear: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#ffb43a" d="M4 0h1v1H4zM4 8h1v1H4zM0 4h1v1H0zM8 4h1v1H8z"/><path fill="#ffd84e" d="M2 2h5v5H2z"/><path fill="#fff4a0" d="M2 2h3v1H2z"/></svg>',
@@ -58,6 +59,7 @@ export function build(app) {
       <button class="blk tp" data-tp="garden">${SVG.house}Garden</button>
     </nav>
     <div id="goal" class="blk" hidden><img alt=""><span class="txt"></span><span class="n"></span><div class="bar"><i></i></div></div>
+    <button id="event" class="blk" hidden><span class="tent">${SVG.tent}</span><span class="t">Market Day</span><img class="hot" alt=""><b class="x3">x3</b><span class="time"></span></button>
     <div id="stick"><div class="base"></div><div class="knob"></div></div>
     <button id="act" class="blk" hidden><span class="ico"></span><span class="lbl">Collect</span><span class="badge" hidden></span></button>
     <button id="prompt" class="blk" hidden><i class="key">${SVG.grab}</i><span><b>Collect</b><small></small></span></button>
@@ -70,7 +72,8 @@ export function build(app) {
     <div id="shade"></div>
     <section class="sheet blk" id="sheet"><header><h2></h2><span class="sub"></span><button class="x blk" aria-label="Close">X</button></header><div class="list"></div><footer hidden></footer></section>
   `);
-  ui = { money: $('#money'), weather: $('#weather'), hotbar: $('#hotbar'), act: $('#act'), prompt: $('#prompt'), bagN: $('#bagN'), info: $('#info'), toasts: $('#toasts'), fx: $('#fx'), hand: $('#hand'), goal: $('#goal'), shade: $('#shade'), sheet: $('#sheet'), stick: $('#stick'), fade: $('#fade'), sellBtn: $('[data-tp="sell"]') };
+  ui = { money: $('#money'), weather: $('#weather'), hotbar: $('#hotbar'), act: $('#act'), prompt: $('#prompt'), bagN: $('#bagN'), info: $('#info'), toasts: $('#toasts'), fx: $('#fx'), hand: $('#hand'), goal: $('#goal'), shade: $('#shade'), sheet: $('#sheet'), stick: $('#stick'), fade: $('#fade'), sellBtn: $('[data-tp="sell"]'), event: $('#event') };
+  ui.event.onclick = () => { if (marketOpen()) teleportTo('market'); else toast('Market Day opens in ' + fmtTime(G.mkt.next) + '.'); };
   ui.shown = G.money;
   $('#settings').onclick = () => openSheet('settings');
   ui.weather.onclick = () => toast(G.weather.type !== 'clear' ? WEATHER[G.weather.type].msg : isNight() ? 'Moonlight can make ripe fruit Moonlit (x2).' : 'The weather changes every few minutes.');
@@ -270,31 +273,43 @@ function nearestRipe(R) {
 function doAction(fromPress) {
   if (!near) return;
   if (near.kind === 'fruit') { const n = nearestRipe(REACH); if (n) grab(n.pl, n.k); }
-  else if (fromPress) openSheet(near.kind);
+  else if (!fromPress) return;
+  else if (near.kind === 'cart') openSheet('cart:' + near.cart);
+  else openSheet(near.kind);
 }
+// standing in front of one of the Market Day carts
+function nearCart() {
+  if (!marketOpen()) return null;
+  for (const id in Wd.CARTS) { const c = Wd.marketSpot(id); if (Wd.distTo(c.x, c.z) < 8) return { kind: 'cart', cart: id }; }
+  return null;
+}
+const ACTS = { fruit: ['Collect', 'grab'], seeds: ['Shop', 'shop'], sell: ['Sell', 'shop'], cart: ['Shop', 'shop'] };
 function updateProximity(dt) {
   const nr = nearestRipe(REACH);
-  const shop = nr ? null : Wd.nearShop(12);
-  near = nr ? { kind: 'fruit', ...nr } : shop ? { kind: shop } : null;
+  const shop = nr ? null : Wd.nearShop(12) || nearCart();
+  near = nr ? { kind: 'fruit', ...nr } : typeof shop === 'string' ? { kind: shop } : shop;
   if (sheetKind || document.getElementById('title')) near = null;
   if (!near) { ui.act.hidden = true; ui.prompt.hidden = true; actHeld = false; return; }
   ui.act.hidden = false;
-  const fruit = near.kind === 'fruit';
-  const label = fruit ? 'Collect' : near.kind === 'seeds' ? 'Shop' : 'Sell';
-  if (ui.actLabel !== label) {
-    ui.actLabel = label;
+  const fruit = near.kind === 'fruit', [label, icon] = ACTS[near.kind];
+  if (ui.actLabel !== label + icon) {
+    ui.actLabel = label + icon;
     $('.lbl', ui.act).textContent = label;
-    $('.ico', ui.act).innerHTML = $('.key', ui.prompt).innerHTML = fruit ? SVG.grab : SVG.shop;
-    ui.act.classList.toggle('shop', !fruit); ui.prompt.classList.toggle('shop', !fruit);
+    $('.ico', ui.act).innerHTML = $('.key', ui.prompt).innerHTML = SVG[icon];
+    ui.act.classList.toggle('shop', icon === 'shop'); ui.prompt.classList.toggle('shop', icon === 'shop');
   }
   const badge = $('.badge', ui.act);
   badge.hidden = !fruit || near.count < 2; badge.textContent = near.count;
-  // floating prompt over the fruit or the shopkeeper
-  const at = fruit ? Wd.project(near.f.x, near.f.y + (near.f.sit ? 3.5 : 1.5), near.f.z) : Wd.project(Wd.SHOPS[near.kind].x, 13, Wd.SHOPS[near.kind].z + 1);
+  // floating prompt over the fruit, the stall or the cart
+  const cart = near.kind === 'cart' && Wd.CARTS[near.cart];
+  const at = fruit ? Wd.project(near.f.x, near.f.y + (near.f.sit ? 3.5 : 1.5), near.f.z)
+    : cart ? Wd.project(cart.x, 16.5, cart.z)
+    : Wd.project(Wd.SHOPS[near.kind].x, 13, Wd.SHOPS[near.kind].z + 1);
   ui.prompt.hidden = at.behind;
   ui.prompt.style.left = at.x + 'px'; ui.prompt.style.top = at.y + 'px';
   const fr = fruit && near.pl.fr[near.k];
-  const sub = fruit ? CROP[near.pl.c].name + (fr ? ` · ${(CROP[near.pl.c].kg * fr.s).toFixed(2)}kg` : '') : near.kind === 'seeds' ? 'Seed shop' : 'Sell your harvest';
+  const sub = fruit ? CROP[near.pl.c].name + (fr ? ` · ${(CROP[near.pl.c].kg * fr.s).toFixed(2)}kg` : '')
+    : cart ? CARTNAME[near.cart] : near.kind === 'seeds' ? 'Seed shop' : 'Sell your harvest';
   const key = label + sub;
   if (ui.promptKey !== key) { ui.promptKey = key; $('b', ui.prompt).textContent = label; $('small', ui.prompt).textContent = sub; }
   if (actHeld && fruit && (actT += dt) > 0.12) { actT = 0; doAction(false); }
@@ -305,8 +320,11 @@ export function teleportTo(where) {
   closeSheet(true);
   ui.fade.classList.remove('go'); void ui.fade.offsetWidth; ui.fade.classList.add('go');
   sfx('open');
+  // the market chip takes you to the veggie cart, or to the berry cart if you are already there
+  if (where === 'market') { const p = Wd.marketSpot('veg'); where = 'cart:' + (Wd.distTo(p.x, p.z) < 10 ? 'berry' : 'veg'); }
   setTimeout(() => {
     if (where === 'garden') Wd.teleport(Wd.HOME, Math.PI);
+    else if (where.startsWith('cart:')) Wd.teleport(Wd.marketSpot(where.slice(5)), Math.PI);
     else Wd.teleport(Wd.SHOPS[where].spot, Math.PI);
     if (where !== 'garden') setTimeout(() => openSheet(where), 260);
   }, 140);
@@ -336,6 +354,7 @@ function updateInfo() {
 
 // ---------------------------------------------------------------- sheets
 let sheetKind = null, sheetTick = 0;
+const CARTNAME = { veg: 'Veggie Cart', berry: 'Berry Cart' };
 export function openSheet(kind) {
   sheetKind = kind;
   ui.shade.classList.add('on'); ui.sheet.classList.add('open');
@@ -348,7 +367,20 @@ function renderSheet() {
   const s = ui.sheet, list = $('.list', s), foot = $('footer', s);
   const keepScroll = list.scrollTop;
   list.innerHTML = ''; foot.hidden = true; foot.innerHTML = '';
-  if (sheetKind === 'seeds') {
+  if (sheetKind && sheetKind.startsWith('cart:')) {
+    const id = sheetKind.slice(5), wares = (G.mkt.wares && G.mkt.wares[id]) || [];
+    $('h2', s).textContent = CARTNAME[id]; $('.sub', s).textContent = marketOpen() ? 'Closes in ' + fmtTime(G.mkt.left) : 'Closed';
+    wares.forEach((w, i) => {
+      const c = CROP[w.id], r = RARITIES[c.rarity], can = w.n > 0 && G.money >= w.price;
+      const row = h('div', 'row blk', `<img src="${ICON[c.id]}" alt=""><div class="meta"><div class="name">${c.name}</div><div class="tag"><span style="color:${r.col};-webkit-text-stroke:0.6px #3a3a5a">${r.name}</span><span style="color:${w.n ? '#3a9a4a' : '#b08870'}">${w.n ? 'x' + w.n + ' left' : 'Sold out'}</span></div></div>`);
+      const b = h('button', 'buy blk' + (can ? '' : ' no'), w.n ? `<s>$${fmt(w.was)}</s>$${fmt(w.price)}` : 'Sold out');
+      b.dataset.id = `ware-${id}-${i}`;
+      b.onclick = () => { if (buyWare(id, i)) { floatAt('+1', b.getBoundingClientRect()); if (!G.sel || G.sel === 'shovel') G.sel = 'seed:' + c.id; renderHotbar(); renderSheet(); } };
+      row.appendChild(b); list.appendChild(row);
+    });
+    if (!wares.length) list.appendChild(h('div', 'empty-note', 'The cart is packed up for today.'));
+    else list.appendChild(h('div', 'empty-note small', 'A quarter off the shop price, today only.'));
+  } else if (sheetKind === 'seeds') {
     $('h2', s).textContent = 'Seeds'; $('.sub', s).textContent = 'Restock ' + fmtTime(restockIn());
     for (const c of CROPS) {
       const n = inStock(c.id), r = RARITIES[c.rarity], can = n > 0 && G.money >= c.price;
@@ -362,12 +394,13 @@ function renderSheet() {
   } else if (sheetKind === 'sell') {
     $('h2', s).textContent = 'Sell'; $('.sub', s).textContent = `Basket ${G.bag.length}/${BASKET}`;
     const groups = new Map();
-    for (const it of G.bag) { const k = itemKey(it); const g = groups.get(k) || { k, c: it.c, m: it.m, n: 0, v: 0 }; g.n++; g.v += it.v; groups.set(k, g); }
+    for (const it of G.bag) { const k = itemKey(it); const g = groups.get(k) || { k, c: it.c, m: it.m, n: 0, v: 0 }; g.n++; g.v += sellValue(it); groups.set(k, g); }
     const gs = [...groups.values()].sort((a, b) => b.v - a.v);
     if (!gs.length) list.appendChild(h('div', 'empty-note', 'Your basket is empty.<br>Walk up to ripe crops and tap Collect.'));
     for (const g of gs) {
       const muts = MUT_ORDER.filter((m) => g.m.includes(m));
-      const row = h('div', 'row blk', `<img src="${ICON[g.c]}" alt=""><div class="meta"><div class="name">${CROP[g.c].name}${g.n > 1 ? ' x' + g.n : ''}</div><div class="tag">${muts.length ? muts.map((m) => `<span style="color:${MUTS[m].col};-webkit-text-stroke:0.6px #3a3a5a">${MUTS[m].name}</span>`).join('') : '<span style="color:#8a86a0">Fresh</span>'}</div></div>`);
+      const hot = marketOpen() && g.c === G.mkt.hot ? '<span class="x3">x3 today</span>' : '';
+      const row = h('div', 'row blk', `<img src="${ICON[g.c]}" alt=""><div class="meta"><div class="name">${CROP[g.c].name}${g.n > 1 ? ' x' + g.n : ''}</div><div class="tag">${hot}${muts.length ? muts.map((m) => `<span style="color:${MUTS[m].col};-webkit-text-stroke:0.6px #3a3a5a">${MUTS[m].name}</span>`).join('') : '<span style="color:#8a86a0">Fresh</span>'}</div></div>`);
       const b = h('button', 'buy sell blk', '$' + fmt(g.v));
       b.onclick = () => { sell(g.k); renderSheet(); };
       row.appendChild(b); list.appendChild(row);
@@ -539,9 +572,12 @@ export function update(dt) {
   ui.bagN.classList.toggle('full', G.bag.length >= BASKET);
   if (ui.infoPl) { ui.infoT -= dt; updateInfo(); }
   if (sheetKind === 'seeds' && (sheetTick += dt) > 1) { sheetTick = 0; $('.sub', ui.sheet).textContent = 'Restock ' + fmtTime(restockIn()); }
+  if (sheetKind && sheetKind.startsWith('cart:') && (sheetTick += dt) > 1) { sheetTick = 0; $('.sub', ui.sheet).textContent = marketOpen() ? 'Closes in ' + fmtTime(G.mkt.left) : 'Closed'; }
   renderHotbar();
   updateProximity(dt);
   tutorial(dt);
+  marketChip();
+  setFestival(marketOpen() && Wd.distTo(0, -66) < 75);
   const night = isNight();
   if (lastNight !== null && night !== lastNight && G.tut >= 7) toast(night ? (bloodMoon() ? 'A Blood Moon rises! Ripe fruit may turn Bloodlit (x4).' : 'Night falls. Moonlight can make fruit Moonlit (x2).') : 'Good morning!');
   lastNight = night;
@@ -549,6 +585,23 @@ export function update(dt) {
   if (lastPeriod !== null && per !== lastPeriod) { toast('Fresh seeds at the Seed shop!'); pulse($('[data-tp="seeds"]')); if (sheetKind === 'seeds') renderSheet(); }
   lastPeriod = per;
   if (G.money < 10 && !Object.keys(G.seeds).length && !G.plants.length && !G.bag.length) { G.seeds.carrot = 3; G.sel = 'seed:carrot'; toast('The seed seller gave you 3 free Carrot seeds!'); }
+}
+
+// the Market Day chip under the teleport buttons: countdown, the crop of the day, tap to go
+function marketChip() {
+  const open = marketOpen(), show = G.tut >= 7 && (open || G.mkt.next < 60);
+  if (ui.event.hidden === show) ui.event.hidden = !show;
+  if (!show) return;
+  const key = (open ? 'o' : 's') + G.mkt.hot;
+  if (ui.eventKey !== key) {
+    ui.eventKey = key;
+    $('.t', ui.event).textContent = open ? 'Market Day' : 'Market in';
+    const img = $('.hot', ui.event), x3 = $('.x3', ui.event);
+    img.hidden = x3.hidden = !open || !G.mkt.hot;
+    if (open && G.mkt.hot) img.src = ICON[G.mkt.hot];
+    ui.event.classList.toggle('open', open);
+  }
+  $('.time', ui.event).textContent = fmtTime(open ? G.mkt.left : G.mkt.next);
 }
 
 // ---------------------------------------------------------------- reactions to game events
@@ -595,6 +648,18 @@ on('broke', () => { toast('Not enough money!'); sfx('error'); });
 on('nostock', () => { toast('Sold out! New seeds in ' + fmtTime(restockIn())); sfx('error'); });
 on('bagfull', () => { const t = performance.now(); if (t - bagFullT < 2000) return; bagFullT = t; toast('Basket full! Tap Sell at the top.'); pulse(ui.sellBtn); sfx('error'); });
 on('buy', () => sfx('buy'));
+on('marketSoon', () => toast('Market Day starts in 30 seconds!'));
+on('market', (open) => {
+  if (open) {
+    sfx('fanfare');
+    toast(`Market Day! ${plural(G.mkt.hot)} sell for triple, and the carts have rare seeds.`);
+    if (Wd.distTo(0, -62) < 90) Wd.confetti();
+    pulse(ui.event);
+  } else {
+    toast("Market's over. See you next time!");
+    if (sheetKind && sheetKind.startsWith('cart:')) closeSheet();
+  }
+});
 on('weather', (w) => { if (G.tut >= 7) toast(w === 'clear' ? 'The skies are clearing up.' : WEATHER[w].msg); });
 on('welcome', ({ sec, ripe }) => { if (sec > 30) setTimeout(() => toast(`Welcome back! Your garden grew for ${fmtTime(sec)}.` + (ripe ? ` ${ripe} fruit ripened.` : '')), 600); });
 on('reset', () => { hotKey = ''; lastStep = -1; ui.shown = G.money; });

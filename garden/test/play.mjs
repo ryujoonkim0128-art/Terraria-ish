@@ -69,7 +69,7 @@ await tick();
 s = await G(() => ({ n: window.game.G.plants.length, tut: window.game.G.tut, sel: window.game.G.sel }));
 check('five carrots planted, tutorial moves on, hand empties', s.n === 5 && s.tut === 1 && s.sel === null, s);
 await shot('2_growing');
-await grow(8); await tick();
+await grow(10); await tick();
 s = await G(() => ({ ripe: window.game.G.plants.filter((p) => p.fr[0].p >= 1).length, tut: window.game.G.tut }));
 check('tutorial carrots grow in seconds', s.ripe === 5 && s.tut === 2, s);
 await shot('3_collect_goal', 900);
@@ -178,6 +178,33 @@ await page.click('#hotbar [data-id="shovel"]');
 await tapAt(await scr(-10, 14, 3));
 check('shovel digs a cheap plant', (await G(() => window.game.G.plants.length)) === 0);
 
+// ---- Market Day: a chip counts down, the carts sell rare seeds at a discount, one crop sells for triple
+await G(() => { window.game.G.mkt.next = 0.05; window.game.sim(0.1); window.game.UI.update(0.05); });
+s = await G(() => ({ chip: !document.querySelector('#event').hidden, t: document.querySelector('#event .t').textContent, hot: window.game.G.mkt.hot, wares: Object.keys(window.game.G.mkt.wares || {}) }));
+check('Market Day opens with a chip and two carts of seeds', s.chip && s.t === 'Market Day' && !!s.hot && s.wares.join() === 'veg,berry', s);
+await page.click('#event');
+await page.waitForTimeout(900);
+s = await G(() => ({ open: document.querySelector('#sheet').classList.contains('open'), h: document.querySelector('#sheet h2').textContent }));
+check('the chip teleports to a cart and opens it', s.open && s.h === 'Veggie Cart', s);
+await shot('9_market_cart');
+const ware = await G(() => { const w = window.game.G.mkt.wares.veg[0]; window.game.G.money = w.price + 5; window.game.UI.update(0.05); return { id: w.id, n: w.n, had: window.game.G.seeds[w.id] || 0 }; });
+await page.click('#sheet .list .row:not(.x) button.buy');
+s = await G((id) => ({ seeds: window.game.G.seeds[id] || 0, n: window.game.G.mkt.wares.veg[0].n, money: window.game.G.money }), ware.id);
+check('buying from a cart costs a quarter less and hands over the seed', s.seeds === ware.had + 1 && s.n === ware.n - 1 && s.money === 5, { ware, s });
+await page.click('#sheet .x'); await page.waitForTimeout(350);
+await G(() => { const g = window.game.G; g.bag.push({ c: g.mkt.hot, kg: 0.3, m: [], v: 10, big: false }); });
+await page.click('[data-tp="sell"]');
+await page.waitForTimeout(900);
+s = await G(() => ({ tag: !!document.querySelector('#sheet .x3'), m0: window.game.G.money }));
+await page.click('#sellAll');
+s.gain = (await G(() => window.game.G.money)) - s.m0;
+check("the crop of the day sells for triple", s.tag && s.gain === 30, s);
+await page.click('#sheet .x'); await page.waitForTimeout(350);
+await G(() => { window.game.G.mkt.left = 0.05; window.game.sim(0.1); window.game.UI.update(0.05); });
+s = await G(() => ({ chip: document.querySelector('#event').hidden, open: window.game.G.mkt.left > 0, next: window.game.G.mkt.next }));
+check('the market packs up and the next one is scheduled', s.chip && !s.open && s.next > 600, s);
+await G(() => window.game.World.teleport(window.game.World.HOME));
+
 // ---- rain mutations
 await G(() => { window.game.G.seeds.strawberry = 1; window.game.G.sel = 'seed:strawberry'; });
 await tapAt(await scr(-4, 18));
@@ -186,7 +213,7 @@ await G(() => { window.game.G.weather = { type: 'rain', left: 300 }; });
 await grow(90);
 s = await G(() => window.game.G.plants[0].fr.filter((f) => f && f.m.includes('wet')).length);
 check('rain makes fruit wet', s > 0, s);
-await shot('9_rain', 2500);
+await shot('10_rain', 2500);
 
 await G(() => window.game.save());
 await page.reload();

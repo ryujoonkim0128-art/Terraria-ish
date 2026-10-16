@@ -1,5 +1,5 @@
 // Time passing: growth, fruiting, weather, day and night, and weather mutations.
-import { CROP, WEATHER, DAY_LEN, NIGHT_START, NIGHT_END } from './data.js';
+import { CROPS, CROP, WEATHER, DAY_LEN, NIGHT_START, NIGHT_END } from './data.js';
 import { G, emit, newFruit } from './state.js';
 import { hash } from './voxel.js';
 
@@ -17,10 +17,46 @@ function addMut(f, m, pl) {
   emit('mut', { pl, f, m });
 }
 
+// ---------- Market Day: every twelve minutes two pop-up carts open on the plaza for four
+export const MARKET_LEN = 240, MARKET_GAP = 720;
+const POOLS = { veg: ['tulip', 'tomato', 'corn', 'watermelon', 'pumpkin', 'mushroom', 'beanstalk'], berry: ['blueberry', 'apple', 'coconut', 'dragonfruit', 'mango', 'grape'] };
+const tier = (id) => CROPS.findIndex((c) => c.id === id);
+function pickHot() {
+  const grown = [...G.plants.map((p) => p.c), ...G.bag.map((it) => it.c)];
+  if (grown.length) return grown[(Math.random() * grown.length) | 0];
+  return ['carrot', 'strawberry', 'blueberry', 'tomato'][(Math.random() * 4) | 0];
+}
+// one seed near where the player is, one a step or two beyond; a quarter off the shop price
+function rollWares(cart) {
+  const have = [...G.plants.map((p) => tier(p.c)), ...CROPS.map((c, i) => (G.money >= c.price * 0.6 ? i : 0))];
+  const at = Math.max(0, ...have);
+  const pool = POOLS[cart];
+  const pick = (lo, hi, not) => {
+    const opts = pool.filter((id) => tier(id) >= lo && tier(id) <= hi && id !== not);
+    return opts.length ? opts[(Math.random() * opts.length) | 0] : pool.filter((id) => id !== not).sort((a, b) => Math.abs(tier(a) - at) - Math.abs(tier(b) - at))[0];
+  };
+  const a = pick(at - 2, at + 1), b = pick(at + 1, at + 4, a);
+  const off = (p) => (p < 100 ? Math.round(p * 0.75) : Math.round((p * 0.75) / 5) * 5);
+  const ware = (id, n) => ({ id, n, price: off(CROP[id].price), was: CROP[id].price });
+  return [ware(a, 2 + ((Math.random() * 2) | 0)), ware(b, 1)];
+}
+function marketTick(dt) {
+  const m = G.mkt;
+  if (m.left > 0) {
+    if ((m.left -= dt) <= 0) { m.left = 0; m.next = MARKET_GAP; m.wares = null; emit('market', false); }
+  } else if (G.tut >= 7) {
+    const was = m.next;
+    m.next -= dt;
+    if (was > 30 && m.next <= 30) emit('marketSoon');
+    if (m.next <= 0) { m.left = MARKET_LEN; m.hot = pickHot(); m.wares = { veg: rollWares('veg'), berry: rollWares('berry') }; emit('market', true); }
+  }
+}
+
 let boltIn = 5, moonIn = 8;
 export function update(dt, offline = false) {
   G.time += dt;
   if (!offline) {
+    marketTick(dt);
     const w = G.weather;
     if (w.type !== 'clear') {
       if ((w.left -= dt) <= 0) { w.type = 'clear'; G.nextWeather = 160 + Math.random() * 120; emit('weather', 'clear'); }

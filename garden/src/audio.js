@@ -65,14 +65,16 @@ export function sfx(name, arg = 0) {
     case 'crack': noise(t, 0.05, { vol: 0.3, freq: 3000, q: 3 }); break;
     case 'mut': tone(N(91), t, 0.1, { type: 'sine', vol: 0.12 }); tone(N(98), t + 0.05, 0.15, { type: 'sine', vol: 0.1 }); break;
     case 'expand': [0, 2, 4, 7, 9, 12].forEach((s, k) => tone(N(67 + s), t + k * 0.05, 0.15, { type: 'triangle', vol: 0.2 })); break;
+    case 'fanfare': [[0, 0], [4, 0.12], [7, 0.24], [12, 0.36], [7, 0.5], [12, 0.62]].forEach(([s, d]) => tone(N(72 + s), t + d, 0.22, { type: 'square', vol: 0.07 })); noise(t + 0.62, 0.4, { vol: 0.1, freq: 6000, q: 1 }); break;
   }
 }
 
 // --- music: a slow pentatonic lullaby over soft chords, re-rolled every bar ---
 const SCALE = [0, 2, 4, 7, 9];
 const CHORDS = [[0, 4, 7], [-3, 0, 4], [5, 9, 12], [7, 11, 14]];
-let nextBar = 0, bar = 0, night = false;
+let nextBar = 0, bar = 0, night = false, festival = false;
 export function setNight(n) { night = n; }
+export function setFestival(f) { festival = f; }
 function startMusic() {
   nextBar = ctx.currentTime + 0.3;
   setInterval(schedule, 200);
@@ -80,7 +82,7 @@ function startMusic() {
 function schedule() {
   if (!ctx || ctx.state !== 'running') return;
   while (nextBar < ctx.currentTime + 1.2) {
-    const beat = night ? 0.6 : 0.42, root = 60 + (night ? -3 : 0);
+    const beat = festival ? 0.3 : night ? 0.6 : 0.42, root = 60 + (night && !festival ? -3 : festival ? 2 : 0);
     const ch = CHORDS[bar % 4];
     ch.forEach((s) => tone(N(root - 12 + s), nextBar, beat * 4, { type: 'triangle', vol: 0.05, bus: musicBus, attack: 0.08 }));
     tone(N(root - 24 + ch[0]), nextBar, beat * 2, { type: 'sine', vol: 0.12, bus: musicBus, attack: 0.02 });
@@ -90,7 +92,12 @@ function schedule() {
       if (Math.random() < 0.28) continue;
       deg = Math.max(0, Math.min(9, deg + [-2, -1, 1, 2, 0][(Math.random() * 5) | 0]));
       const n = root + 12 + SCALE[deg % 5] + 12 * Math.floor(deg / 5) - 12;
-      tone(N(n), nextBar + i * beat, beat * 0.9, { type: night ? 'sine' : 'square', vol: night ? 0.07 : 0.025, bus: musicBus, attack: 0.01 });
+      tone(N(n), nextBar + i * beat, beat * 0.9, { type: night && !festival ? 'sine' : 'square', vol: night && !festival ? 0.07 : festival ? 0.035 : 0.025, bus: musicBus, attack: 0.01 });
+    }
+    // on Market Day: a shaker on every beat and a little oom-pah
+    if (festival) for (let i = 0; i < 4; i++) {
+      noise(nextBar + i * beat, 0.05, { vol: 0.05, freq: 7000, q: 1.5, bus: musicBus });
+      if (i % 2) tone(N(root - 12 + ch[1]), nextBar + i * beat, beat * 0.5, { type: 'triangle', vol: 0.06, bus: musicBus });
     }
     nextBar += beat * 4;
     bar++;

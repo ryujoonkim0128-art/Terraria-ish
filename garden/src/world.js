@@ -1,7 +1,7 @@
 // The 3D world: the map, a third-person camera that follows your farmer, movement and collisions,
 // neighbours, plants and fruit (instanced), weather, sky, effects and picking.
 import { CROP, BED, inBed, bedR } from './data.js';
-import { G, on } from './state.js';
+import { G, on, marketOpen } from './state.js';
 import { dayFrac, bloodMoon } from './sim.js';
 import { Vox, mesh, chunks, rng, hash, hex, shade, Batcher } from './voxel.js';
 import * as M from './models.js';
@@ -18,17 +18,19 @@ export const SHOPS = {
 };
 export const HOME = { x: 0, z: 35 };
 const PLAZA = { x0: -40, x1: 40, z0: -92, z1: -50 };
-const NEIGHBORS = [
-  { x: -66, z: -4, rx: 18, rz: 20, name: 'PixelPete', pal: { shirt: '#5aa0ff', pants: '#3a4a6a', hat: '#ff8a3a', band: '#ffffff', hair: '#2a1a14', skin: '#d99a6a' } },
-  { x: 66, z: -4, rx: 18, rz: 20, name: 'BerryBella', pal: { shirt: '#ff7ab0', pants: '#7a4ac8', hat: '#ffffff', band: '#ff7ab0', hair: '#e8c06a', skin: '#ffd8b8' } },
-];
+// two neighbouring gardens, fenced off, to walk past
+const NEIGHBORS = [{ x: -66, z: -4, rx: 18, rz: 20 }, { x: 66, z: -4, rx: 18, rz: 20 }];
+// Market Day: two pop-up carts beside the stalls and a maypole in the middle of the plaza
+export const CARTS = { veg: { x: -31, z: -71 }, berry: { x: 31, z: -71 } };
+const MAYPOLE = { x: 0, z: -62 };
 export const BOUNDS = { x0: -112, x1: 112, z0: -112, z1: 92 };
 const inNb = (nb, x, z, m = 0) => { const dx = (x - nb.x) / nb.rx, dz = (z - nb.z) / nb.rz; return Math.hypot(dx, dz) < bedR(Math.atan2(dz, dx)) - m / nb.rx; };
 export const onAnyBed = (x, z) => inBed(x, z) || NEIGHBORS.some((nb) => inNb(nb, x, z));
 export const groundY = (x, z) => (onAnyBed(x, z) ? TOP : 1);
 
 let renderer, scene, cam, sun, hemi, skyC, skyG, plants, fruits, partMesh, rainMesh, snowMesh, trailMesh, arrow, ring, ghostRing, bolt, heldMesh, mats;
-const parts = [], drops = [], flakes = [], anims = new Map(), lanternGlows = [], clouds = [], npcs = [], colliders = [], decor = [], nbFarmers = [];
+const parts = [], drops = [], flakes = [], anims = new Map(), lanternGlows = [], clouds = [], colliders = [], decor = [], balloons = [];
+let market = null;
 const shopBoxes = {};
 let playerMeshes = [];
 
@@ -82,6 +84,7 @@ export function init(host) {
     scene.add(c); clouds.push(c);
   }
   buildNeighbors();
+  buildMarket();
   on('reset', () => anims.clear());
   snapCamera();
 }
@@ -169,10 +172,8 @@ function buildProps() {
   }
   // signposts
   V.box(-16, 1, 32, -16, 4, 32, '#8a5a3a', 0.03); V.box(-10, 1, 32, -10, 4, 32, '#8a5a3a', 0.03);
-  for (const nb of NEIGHBORS) { const z = nb.z + nb.rz + 6; V.box(nb.x - 3, 1, z, nb.x - 3, 4, z, '#8a5a3a'); V.box(nb.x + 3, 1, z, nb.x + 3, 4, z, '#8a5a3a'); }
   for (const geo of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo, mats.vox); m.castShadow = true; m.receiveShadow = true; scene.add(m); }
   sign('YOUR GARDEN', -12.5, 5.6, 32.6, 8, '#c8904a');
-  for (const nb of NEIGHBORS) sign(nb.name.toUpperCase(), nb.x + 0.5, 5.6, nb.z + nb.rz + 6.6, 8, '#9a7ad0');
 }
 function addLampHead(x, y, z) {
   const l = new T.Mesh(M.lanternGeo(), mats.basic);
@@ -199,18 +200,17 @@ function textTexture(str, bg, w = 512, h = 128) {
   if (document.fonts) document.fonts.ready.then(draw);
   return tex;
 }
-function sign(str, x, y, z, w, bg) {
+function sign(str, x, y, z, w, bg, parent = scene) {
   const board = new T.Mesh(new T.BoxGeometry(w, w / 4, 0.6), new T.MeshLambertMaterial({ color: 0x8a5a3a }));
-  board.position.set(x, y, z - 0.35); board.castShadow = true; scene.add(board);
+  board.position.set(x, y, z - 0.35); board.castShadow = true; parent.add(board);
   const face = new T.Mesh(new T.PlaneGeometry(w - 0.4, w / 4 - 0.4), new T.MeshLambertMaterial({ map: textTexture(str, bg) }));
-  face.position.set(x, y, z - 0.03); scene.add(face);
+  face.position.set(x, y, z - 0.03); parent.add(face);
 }
 function buildShops() {
   for (const kind of ['seeds', 'sell']) {
     const { x, z } = SHOPS[kind];
     const s = new T.Mesh(M.stallGeo(kind), mats.vox);
     s.position.set(x, 1, z); s.castShadow = true; s.receiveShadow = true; scene.add(s);
-    const n = new T.Mesh(M.npcGeo(kind), mats.vox); n.position.set(x, 1, z - 1); n.castShadow = true; scene.add(n); npcs.push(n);
     const face = new T.Mesh(new T.PlaneGeometry(9, 2.25), new T.MeshLambertMaterial({ map: textTexture(M.STALL[kind].label, M.STALL[kind].col, 256, 64) }));
     face.position.set(x, 1 + 16.5, z - 1 + 0.52); scene.add(face);
     const l = new T.Mesh(M.lanternGeo(), mats.basic); l.position.set(x + 8, 1 + 9, z); scene.add(l);
@@ -242,10 +242,47 @@ function buildNeighbors() {
       placed.push({ id: 10000 + ni * 100 + k, c, x, z, g: cr.grow, v: Math.floor(R() * 3), rot: Math.floor(R() * 4), fr });
     }
     decor.push(...placed);
-    const meshes = [0, 1, 2].map((f) => { const m = new T.Mesh(M.farmerGeo(f, nb.pal, 'nb' + ni), mats.vox); m.castShadow = true; scene.add(m); return m; });
-    nbFarmers.push({ nb, x: nb.x, z: nb.z + 4, tx: nb.x, tz: nb.z, dir: 0, walk: 0, wait: 1 + ni, act: 0, meshes });
   });
 }
+// Market Day dressing: two carts with balloons, a maypole with bunting, a banner over the way in
+function buildMarket() {
+  market = new T.Group(); market.visible = false; scene.add(market);
+  const BAL = { veg: ['#ff5a6a', '#ffd84e', '#5a9ae8'], berry: ['#ff7ab0', '#c08aff', '#ffffff'] };
+  for (const id of ['veg', 'berry']) {
+    const c = CARTS[id];
+    const m = new T.Mesh(M.cartGeo(id), mats.vox); m.position.set(c.x, 1, c.z); m.castShadow = m.receiveShadow = true; market.add(m);
+    sign(M.CART[id].label, c.x, 14.2, c.z - 1.2, 9, M.CART[id].col, market);
+    BAL[id].forEach((col, k) => {
+      const b = new T.Mesh(M.balloonGeo(col), mats.vox);
+      b.userData = { x: c.x + [-5.5, 5.5, 4][k], y: [10.5, 10.5, 13][k], z: c.z + [2.5, 2.5, 1][k], ph: k * 2 + c.x };
+      b.castShadow = true; market.add(b); balloons.push(b);
+    });
+    colliders.push({ x0: c.x - 6, x1: c.x + 6, z0: c.z - 3.5, z1: c.z + 3.5, when: marketOpen });
+  }
+  const V = new Vox(rng(31)), RIB = ['#ff5a6a', '#ffd84e', '#5cc060', '#5a9ae8', '#c08aff', '#ff9a3a'], P = MAYPOLE;
+  V.box(P.x - 1, 1, P.z - 1, P.x + 1, 1, P.z + 1, '#c8b48a', 0.03);
+  for (let y = 2; y <= 18; y++) V.set(P.x, y, P.z, y % 3 === 0 ? RIB[(y / 3) % RIB.length] : '#f6ecd8', 0.02);
+  V.set(P.x, 19, P.z, '#ffd84e', 0); V.set(P.x, 20, P.z, '#ffe880', 0);
+  let f = 0;
+  for (const [ex, ez] of [[-38, -52], [38, -52], [-38, -90], [38, -90]]) {
+    const L = Math.ceil(Math.hypot(ex - P.x, 10 - 18, ez - P.z));
+    for (let i = 0; i <= L; i++) {
+      const t = i / L, x = P.x + (ex - P.x) * t, z = P.z + (ez - P.z) * t, y = 18 + (10 - 18) * t - 3.5 * Math.sin(Math.PI * t);
+      V.set(x, y, z, '#f6ecd8', 0);
+      if (i % 3 === 1 && i > 1 && i < L - 1) { const col = RIB[f++ % RIB.length]; V.set(x, y - 1, z, col, 0.03); V.set(x, y - 2, z, col, 0.03); }
+    }
+  }
+  const pole = new T.Mesh(mesh(V), mats.vox); pole.castShadow = true; market.add(pole);
+  colliders.push({ x: P.x - 0.5, z: P.z - 0.5, r: 1.6, when: marketOpen });
+  const B = new Vox(rng(3));
+  for (const x of [-7, 7]) B.box(x, 1, -48, x, 8, -48, '#8a5a3a', 0.03);
+  market.add(new T.Mesh(mesh(B), mats.vox));
+  sign('MARKET DAY', 0, 9.6, -47.6, 14, '#ff5a8a', market);
+}
+export function confetti() {
+  burst(MAYPOLE.x, 20, MAYPOLE.z, ['#ff5a6a', '#ffd84e', '#5cc060', '#5a9ae8', '#c08aff', '#ffffff'], 70, { speed: 16, up: 18, g: 14, life: 2.2, size: 0.45 });
+}
+export const marketSpot = (id) => ({ x: CARTS[id].x, z: CARTS[id].z + 9 });
 
 // ---------------------------------------------------------------- camera
 const cs = { yaw: 0, pitch: 0.72, dist: 52, tx: 0, ty: 0, tz: 0, lead: 10, lift: 3 };
@@ -283,6 +320,7 @@ export const camYaw = () => cs.yaw;
 const angLerp = (a, b, t) => { let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI; if (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
 function collide(o, r) {
   for (const c of colliders) {
+    if (c.when && !c.when()) continue;
     if (c.r !== undefined) {
       const dx = o.x - (c.x + 0.5), dz = o.z - (c.z + 0.5), d = Math.hypot(dx, dz), m = r + c.r;
       if (d < m && d > 0.0001) { o.x += (dx / d) * (m - d); o.z += (dz / d) * (m - d); }
@@ -543,24 +581,12 @@ export function update(dt, input = { x: 0, y: 0 }) {
   }
   const glowOn = Math.max(env.night, env.storm * 0.5);
   lanternGlows.forEach((gl) => { gl.material.opacity = glowOn * (0.8 + Math.sin(t * 3) * 0.05); gl.visible = gl.material.opacity > 0.02; });
-  npcs.forEach((n, k) => {
-    n.position.y = 1 + (Math.sin(t * 2.4 + k) > 0.6 ? 0.25 : 0);
-    const dx = p.x - n.position.x, dz = p.z - n.position.z;
-    n.rotation.y = Math.hypot(dx, dz) < 30 ? Math.atan2(dx, dz) : Math.sin(t * 0.7 + k * 2) * 0.35;
-  });
-  // neighbours wander their plots
-  for (const f of nbFarmers) {
-    if (f.wait > 0) {
-      f.wait -= dt; f.walk = 0;
-      if (f.wait <= 0) { const a2 = Math.random() * Math.PI * 2, r = Math.random() * 0.8; f.tx = f.nb.x + Math.cos(a2) * f.nb.rx * r; f.tz = f.nb.z + Math.sin(a2) * f.nb.rz * r; }
-    } else {
-      const dx = f.tx - f.x, dz = f.tz - f.z, dd = Math.hypot(dx, dz);
-      if (dd < 0.6) { f.wait = 1.5 + Math.random() * 4; f.act = 0.25; }
-      else { const s = Math.min(dd, 7 * dt); f.x += (dx / dd) * s; f.z += (dz / dd) * s; f.dir = angLerp(f.dir, Math.atan2(dx, dz), 0.2); f.walk += dt * 3; }
-    }
-    f.act = Math.max(0, f.act - dt);
-    f.y = groundY(f.x, f.z);
-    drawFarmer(f.meshes, f);
+  // Market Day dressing
+  const mOn = marketOpen();
+  if (market.visible !== mOn) market.visible = mOn;
+  if (mOn) {
+    for (const b of balloons) { const u = b.userData; b.position.set(u.x + Math.sin(t * 0.9 + u.ph) * 0.3, u.y + Math.sin(t * 1.6 + u.ph) * 0.4, u.z); b.rotation.z = Math.sin(t * 1.2 + u.ph) * 0.12; }
+    if (Math.hypot(p.x - MAYPOLE.x, p.z - MAYPOLE.z) < 60 && Math.random() < dt * 0.25) burst(MAYPOLE.x + (Math.random() - 0.5) * 50, 22, MAYPOLE.z + (Math.random() - 0.5) * 30, ['#ff5a6a', '#ffd84e', '#5cc060', '#5a9ae8', '#c08aff'], 14, { speed: 4, up: 2, g: 6, life: 2.5, size: 0.4 });
   }
   const held = G.sel === 'shovel' ? 'shovel' : G.sel && G.sel.startsWith('seed:') ? seedColor(G.sel.slice(5)) : null;
   drawFarmer(playerMeshes, p, held);
