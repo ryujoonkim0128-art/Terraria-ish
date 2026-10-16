@@ -77,14 +77,12 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 #act .ico svg { display: block; width: 32px; height: 32px; }
 #act .lbl { font: 12px/1 var(--display); text-shadow: 0 2px 0 rgba(0,0,0,0.25); }
 #act.shop { --c: var(--sell); }
-#act.steal { --c: var(--red); }
 #act .badge { right: -6px; top: -6px; }
 @keyframes actin { from { transform: scale(0.3); } }
 #prompt { position: absolute; z-index: 7; transform: translate(-50%, -100%); margin-top: -10px; display: flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; background: rgba(26,26,46,0.8); border-color: rgba(255,255,255,0.92); color: #fff; white-space: nowrap; text-align: left; box-shadow: 0 4px 0 rgba(26,26,46,0.35); }
 #prompt:active, #prompt.down { transform: translate(-50%, calc(-100% + 3px)); box-shadow: 0 1px 0 rgba(26,26,46,0.35); }
 #prompt .key { width: 34px; height: 34px; border-radius: 4px; background: var(--green); border: 2px solid #fff; display: grid; place-items: center; flex: none; }
 #prompt.shop .key { background: var(--sell); }
-#prompt.steal .key { background: var(--red); }
 #prompt .key svg { width: 20px; height: 20px; }
 #prompt b { display: block; font: 15px/1.05 var(--display); }
 #prompt small { display: block; font: 700 11px/1.2 var(--body); color: #d8dcff; }
@@ -104,8 +102,6 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 /* Market Day prices */
 .x3 { display: inline-block; padding: 1px 5px; margin-right: 6px; background: var(--gold); color: var(--ink); border-radius: 4px; font: 11px/1.3 var(--display); letter-spacing: 0; text-transform: none; }
 .buy s { display: block; font: 700 10px/1 var(--body); opacity: 0.75; margin-bottom: 2px; }
-
-#dialog .box small { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); }
 
 /* teleport flash */
 #fade { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 31; }
@@ -175,7 +171,8 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 @keyframes floatup { 0% { opacity: 0; transform: translate(-50%, -30%) scale(0.6); } 15% { opacity: 1; transform: translate(-50%, -70%) scale(1.1); } 70% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -170%); } }
 .fly { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; }
 
-/* title & dialogs */
+/* title & dialogs: the title screen hides the HUD so the island has the screen */
+#app.intro #hud, #app.intro #tp, #app.intro #tray, #app.intro #stick, #app.intro #goal, #app.intro #act, #app.intro #prompt { visibility: hidden; }
 #title { position: absolute; inset: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: linear-gradient(rgba(26,26,46,0.05), rgba(26,26,46,0.45)); }
 #title h1 { margin: 0; text-align: center; font: clamp(40px, 13vw, 64px)/0.92 var(--display); color: #fff; -webkit-text-stroke: 6px var(--ink); paint-order: stroke fill; text-shadow: 0 6px 0 var(--ink); }
 #title h1 em { font-style: normal; color: #8ff06a; display: block; }

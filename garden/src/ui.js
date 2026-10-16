@@ -1,7 +1,7 @@
 // DOM UI and controls: joystick + camera drag, tap to plant, Collect prompts, teleport buttons,
-// shop sheets, toasts, the wordless tutorial, and stealing from the other gardens on the street.
-import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, BED, inBed, plural, fruitValue } from './data.js';
-import { G, on, plant, collect, sell, buySeed, buyWare, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, sellValue, marketOpen, itemKey, placeBlock, reset, save, tutDone, TUT_DONE, steal, stealPrice, stealWait } from './state.js';
+// shop sheets, toasts, and the wordless tutorial.
+import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, BED, inBed, plural } from './data.js';
+import { G, on, plant, collect, sell, buySeed, buyWare, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, sellValue, marketOpen, itemKey, placeBlock, reset, save, tutDone, TUT_DONE } from './state.js';
 import { speed, isNight, bloodMoon } from './sim.js';
 import * as Wd from './world.js';
 import { ICON } from './icons.js';
@@ -30,7 +30,6 @@ const SVG = {
   coin: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M3 1h4v1h1v1h1v4H8v1H7v1H3V8H2V7H1V3h1V2h1z"/><path fill="rgba(0,0,0,0.22)" d="M4 3h2v4H4z"/></svg>',
   house: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 1h2v1h1v1h1v1h1v1H1V4h1V3h1V2h1zM2 5h6v4H6V7H4v2H2z"/></svg>',
   tent: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 0h2v1h1v1h1v1h1v1h1v1H0V4h1V3h1V2h1V1h1z"/><path fill="#ffd84e" d="M1 5h8v4H1z"/><path fill="#3a3a5a" d="M4 6h2v3H4z"/></svg>',
-  sack: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M3 0h4v1H6v1h1v1h1v1h1v1h1v4H9v1H1V9H0V5h1V4h1V3h1V2h1V1H3z"/><path fill="#3a3a5a" d="M4 4h3v1H5v1h2v3H4V8h2V7H4z"/></svg>',
 };
 const WICON = {
   clear: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#ffb43a" d="M4 0h1v1H4zM4 8h1v1H4zM0 4h1v1H0zM8 4h1v1H8z"/><path fill="#ffd84e" d="M2 2h5v5H2z"/><path fill="#fff4a0" d="M2 2h3v1H2z"/></svg>',
@@ -112,10 +111,11 @@ export function build(app) {
 }
 
 export function showTitle(app, start) {
-  const t = h('div', '', `<h1>Grow a<em>Garden</em></h1><button class="blk">${G.stats.planted ? 'Play' : 'Start'}</button>`);
+  const t = h('div', '', `<h1>Sky<em>Garden</em></h1><button class="blk">${G.stats.planted ? 'Play' : 'Start'}</button>`);
   t.id = 'title';
   app.appendChild(t);
-  $('button', t).onclick = () => { initAudio(); setSound(G.sound); setMusic(G.music); sfx('open'); t.remove(); start(); };
+  app.classList.add('intro'); Wd.titleView(true);
+  $('button', t).onclick = () => { initAudio(); setSound(G.sound); setMusic(G.music); sfx('open'); t.remove(); app.classList.remove('intro'); Wd.titleView(false); start(); };
 }
 
 // ---------------------------------------------------------------- hotbar
@@ -204,14 +204,10 @@ function tap(x, y) {
   const p = Wd.W.player;
   if (fr && G.sel !== 'shovel') {
     const f = fr.pl._fw[fr.k];
-    if (Math.hypot(f.x - p.x, f.z - p.z) <= TAP_REACH) { if (fr.owner) askSteal(fr.owner, fr.pl, fr.k); else grab(fr.pl, fr.k); return; }
+    if (Math.hypot(f.x - p.x, f.z - p.z) <= TAP_REACH) { grab(fr.pl, fr.k); return; }
     tooFar(f); return;
   }
-  const hit = Wd.pickPlant(x, y), pl = hit && !hit.owner ? hit.pl : null;
-  if (hit && hit.owner) {
-    if (G.sel === 'shovel') { toast(`That's ${hit.owner.name}'s garden!`); sfx('error'); return; }
-    showInfo(hit.pl, hit.owner); sfx('tap'); return;
-  }
+  const pl = Wd.pickPlant(x, y);
   if (pl) {
     if (G.sel === 'shovel') {
       if (CROP[pl.c].price >= 1000) dialog(`Dig up this ${CROP[pl.c].name}? It will be gone for good.`, 'Dig up', () => dig(pl), 'var(--red)');
@@ -262,17 +258,16 @@ function grab(pl, k) {
 
 // ---------------------------------------------------------------- proximity: Collect prompt + action button
 let actHeld = false, actT = 0, near = null;
-// the nearest ripe fruit in reach: in your garden, or (others = true) in someone else's
-function nearestRipe(R, others = false) {
+function nearestRipe(R) {
   const p = Wd.W.player;
   let best = null, bd = R, count = 0;
-  for (const { owner, plants } of others ? Wd.gardens().slice(1) : [{ owner: null, plants: G.plants }]) for (const pl of plants) for (let k = 0; k < (pl._fw || []).length; k++) {
+  for (const pl of G.plants) for (let k = 0; k < (pl._fw || []).length; k++) {
     const f = pl._fw[k];
-    if (!f || !f.ripe || !pl.fr[k]) continue;
+    if (!f || !f.ripe) continue;
     const d = Math.hypot(f.x - p.x, f.z - p.z);
     if (d > R) continue;
     count++;
-    if (d < bd) { bd = d; best = { pl, k, f, owner }; }
+    if (d < bd) { bd = d; best = { pl, k, f }; }
   }
   return best ? { ...best, count } : null;
 }
@@ -280,25 +275,8 @@ function doAction(fromPress) {
   if (!near) return;
   if (near.kind === 'fruit') { const n = nearestRipe(REACH); if (n) grab(n.pl, n.k); }
   else if (!fromPress) return;
-  else if (near.kind === 'steal') askSteal(near.owner, near.pl, near.k);
   else if (near.kind === 'cart') openSheet('cart:' + near.cart);
   else openSheet(near.kind);
-}
-// what a fruit is called, with its best mutation: "Gold Mango"
-const fruitName = (c, m) => { const top = MUT_ORDER.find((x) => m.includes(x)); return (top ? MUTS[top].name + ' ' : '') + CROP[c].name; };
-// Stealing: you pay half what the fruit is worth (in Sheckles for now), and that garden moves out
-function askSteal(owner, pl, k) {
-  const f = pl.fr[k];
-  if (!f || f.p < 1) return;
-  const wait = stealWait();
-  if (wait > 0) { toast(`Lie low for a bit. You can steal again in ${fmtTime(wait)}.`); sfx('error'); return; }
-  const price = stealPrice(pl, k), name = fruitName(pl.c, f.m);
-  if (G.money < price) { toast(`Stealing this ${name} costs $${fmt(price)}.`); sfx('error'); return; }
-  const worth = fruitValue(pl.c, f.s, f.m);
-  dialog(`Steal ${esc(owner.name)}'s ${name}?<small>It sells for $${fmt(worth)}. Their garden will move away after this.</small>`, `Steal $${fmt(price)}`, () => {
-    if (pl._fw && pl._fw[k]) Wd.faceTo(pl._fw[k].x, pl._fw[k].z);
-    steal(owner, pl, k);
-  }, 'var(--red)');
 }
 // standing in front of one of the Market Day carts
 function nearCart() {
@@ -306,22 +284,23 @@ function nearCart() {
   for (const id in Wd.CARTS) { const c = Wd.marketSpot(id); if (Wd.distTo(c.x, c.z) < 8) return { kind: 'cart', cart: id }; }
   return null;
 }
-const ACTS = { fruit: ['Collect', 'grab'], steal: ['Steal', 'sack'], seeds: ['Shop', 'shop'], sell: ['Sell', 'shop'], cart: ['Shop', 'shop'] };
+const ACTS = { fruit: ['Collect', 'grab'], seeds: ['Shop', 'shop'], sell: ['Sell', 'shop'], cart: ['Shop', 'shop'] };
 function updateProximity(dt) {
-  const nr = nearestRipe(REACH), theirs = nr ? null : nearestRipe(REACH, true), shop = nr || theirs ? null : Wd.nearShop(12) || nearCart();
-  near = nr ? { kind: 'fruit', ...nr } : theirs ? { kind: 'steal', ...theirs } : typeof shop === 'string' ? { kind: shop } : shop;
+  const nr = nearestRipe(REACH);
+  const shop = nr ? null : Wd.nearShop(12) || nearCart();
+  near = nr ? { kind: 'fruit', ...nr } : typeof shop === 'string' ? { kind: shop } : shop;
   if (sheetKind || document.getElementById('title')) near = null;
   if (!near) { ui.act.hidden = true; ui.prompt.hidden = true; actHeld = false; return; }
   ui.act.hidden = false;
-  const fruit = near.kind === 'fruit' || near.kind === 'steal', [label, icon] = ACTS[near.kind];
+  const fruit = near.kind === 'fruit', [label, icon] = ACTS[near.kind];
   if (ui.actLabel !== label + icon) {
     ui.actLabel = label + icon;
     $('.lbl', ui.act).textContent = label;
     $('.ico', ui.act).innerHTML = $('.key', ui.prompt).innerHTML = SVG[icon];
-    for (const k of ['shop', 'steal']) { const on = k === 'shop' ? icon === 'shop' : near.kind === k; ui.act.classList.toggle(k, on); ui.prompt.classList.toggle(k, on); }
+    ui.act.classList.toggle('shop', icon === 'shop'); ui.prompt.classList.toggle('shop', icon === 'shop');
   }
   const badge = $('.badge', ui.act);
-  badge.hidden = near.kind !== 'fruit' || near.count < 2; badge.textContent = near.count;
+  badge.hidden = !fruit || near.count < 2; badge.textContent = near.count;
   // floating prompt over the fruit, the stall or the cart
   const cart = near.kind === 'cart' && Wd.CARTS[near.cart];
   const at = fruit ? Wd.project(near.f.x, near.f.y + (near.f.sit ? 3.5 : 1.5), near.f.z)
@@ -330,12 +309,11 @@ function updateProximity(dt) {
   ui.prompt.hidden = at.behind;
   ui.prompt.style.left = at.x + 'px'; ui.prompt.style.top = at.y + 'px';
   const fr = fruit && near.pl.fr[near.k];
-  const sub = near.kind === 'steal' ? (fr ? `${fruitName(near.pl.c, fr.m)} · ${stealWait() > 0 ? 'wait ' + fmtTime(stealWait()) : '$' + fmt(stealPrice(near.pl, near.k))}` : '')
-    : fruit ? CROP[near.pl.c].name + (fr ? ` · ${(CROP[near.pl.c].kg * fr.s).toFixed(2)}kg` : '')
+  const sub = fruit ? CROP[near.pl.c].name + (fr ? ` · ${(CROP[near.pl.c].kg * fr.s).toFixed(2)}kg` : '')
     : cart ? CARTNAME[near.cart] : near.kind === 'seeds' ? 'Seed shop' : 'Sell your harvest';
   const key = label + sub;
   if (ui.promptKey !== key) { ui.promptKey = key; $('b', ui.prompt).textContent = label; $('small', ui.prompt).textContent = sub; }
-  if (actHeld && near.kind === 'fruit' && (actT += dt) > 0.12) { actT = 0; doAction(false); }
+  if (actHeld && fruit && (actT += dt) > 0.12) { actT = 0; doAction(false); }
 }
 
 // ---------------------------------------------------------------- teleports
@@ -354,10 +332,10 @@ export function teleportTo(where) {
 }
 
 // ---------------------------------------------------------------- plant info bubble
-function showInfo(pl, owner = null) { ui.infoPl = pl; ui.infoOwner = owner; ui.infoT = 3.5; ui.info.hidden = false; updateInfo(); }
+function showInfo(pl) { ui.infoPl = pl; ui.infoT = 3.5; ui.info.hidden = false; updateInfo(); }
 function updateInfo() {
-  const pl = ui.infoPl, owner = ui.infoOwner;
-  if (!pl || !(owner ? owner.plants : G.plants).includes(pl) || ui.infoT <= 0) { ui.info.hidden = true; ui.infoPl = null; return; }
+  const pl = ui.infoPl;
+  if (!pl || !G.plants.includes(pl) || ui.infoT <= 0) { ui.info.hidden = true; ui.infoPl = null; return; }
   const c = CROP[pl.c], sp = speed(pl);
   let prog, label;
   if (!c.multi || pl.g < c.grow) { prog = Wd.growth(pl); label = prog >= 1 ? 'Ready!' : 'Ready in ' + fmtTime((c.grow - pl.g) / sp); }
@@ -366,7 +344,7 @@ function updateInfo() {
     prog = pl.fr.reduce((s, f) => s + (f ? f.p : 0), 0) / c.n;
     label = ripe ? `${ripe} of ${c.n} ripe` : grow.length ? 'Fruit in ' + fmtTime(Math.min(...grow.map((f) => ((1 - f.p) * c.regrow) / sp))) : 'Flowering';
   }
-  $('.t', ui.info).textContent = (owner ? owner.name + "'s " : '') + c.name;
+  $('.t', ui.info).textContent = c.name;
   $('.t', ui.info).style.color = RARITIES[c.rarity].col;
   $('.pb i', ui.info).style.width = Math.round(Math.min(1, prog) * 100) + '%';
   $('.s', ui.info).textContent = label;
@@ -460,7 +438,6 @@ function dialog(msg, yes, fn, col) {
 }
 
 // ---------------------------------------------------------------- toasts & effects
-const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 export function toast(str) {
   if ([...ui.toasts.children].some((c) => c.textContent === str)) return;
   const t = h('div', 'toast blk'); t.textContent = str;
@@ -701,14 +678,3 @@ on('market', (open) => {
 on('weather', (w) => { if (tutDone()) toast(w === 'clear' ? 'The skies are clearing up.' : WEATHER[w].msg); });
 on('welcome', ({ sec, ripe }) => { if (sec > 30) setTimeout(() => toast(`Welcome back! Your garden grew for ${fmtTime(sec)}.` + (ripe ? ` ${ripe} fruit ripened.` : '')), 600); });
 on('reset', () => { hotKey = ''; lastStep = -1; ui.shown = G.money; });
-// the other gardens: fruit you take from them, and gardens moving out and in
-on('steal', ({ item, at, pl }) => {
-  const w = at || { x: pl.x, y: 4, z: pl.z }, from = Wd.project(w.x, w.y, w.z);
-  flyIcon(ICON[item.c], from, center(ui.sellBtn), 0, () => bump(ui.sellBtn));
-  floatText(`Stolen! ${fruitName(item.c, item.m)} $${fmt(item.v)}`, from.x, from.y - 24, '#ffd84e');
-  sfx('mut');
-  save();
-});
-on('stealwait', () => { toast(`Lie low for a bit. You can steal again in ${fmtTime(stealWait())}.`); sfx('error'); });
-on('moveout', (nb) => toast(`${nb.name}'s garden moved out. A new garden is on its way.`));
-on('movein', (nb) => { if (Wd.distTo(nb.R.cx, nb.R.cz) < 90) toast(`New neighbor: ${nb.name}'s garden.`); });

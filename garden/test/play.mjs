@@ -54,8 +54,6 @@ await page.click('#title button', { force: true });
 await page.waitForFunction(() => !document.querySelector('#goal').hidden && !document.querySelector('#hand').hidden, null, { timeout: 8000 }).catch(() => {});
 let s = await G(() => ({ goal: document.querySelector('#goal .txt').textContent, n: document.querySelector('#goal .n').textContent, money: window.game.G.money, seeds: Object.keys(window.game.G.seeds).length, hand: !document.querySelector('#hand').hidden, tp: document.querySelectorAll('#tp .tp').length }));
 check('a fresh start: $20, no seeds, and the first goal is buying two carrots', s.goal === 'Buy seeds' && s.n === '0/2' && s.money === 20 && s.seeds === 0 && s.hand && s.tp === 3, s);
-s = await G(() => window.game.Neighbors.neighbors.map((n) => n && { name: n.name, plants: n.plants.length }));
-check('five other gardens on the street, each with an owner and plants', s.filter(Boolean).length === 5 && s.every((n) => n && n.name && n.plants >= 8), s);
 await shot('1_start');
 
 // ---- the first carrots come from the shop
@@ -182,6 +180,13 @@ const yaw0 = await G(() => window.game.World.camYaw());
 await page.mouse.move(320, 300); await page.mouse.down(); await page.mouse.move(250, 300, { steps: 6 }); await page.mouse.up();
 const yaw1 = await G(() => window.game.World.camYaw());
 check('dragging the right side turns the camera', Math.abs(yaw1 - yaw0) > 0.3, { yaw0, yaw1 });
+// the island ends in a cliff: walk toward the edge and you stop short of it
+await G(() => window.game.World.teleport({ x: 0, z: 46 }));
+await page.keyboard.down('s');
+for (let i = 0; i < 25; i++) await page.waitForTimeout(150);
+await page.keyboard.up('s');
+s = await G(() => { const p = window.game.World.W.player; return { x: p.x, y: p.y, z: p.z }; });
+check("you can't walk off the edge of the island", s.z > 47 && s.z < 60 && s.y > 0.9, s);
 await G(() => window.game.World.teleport(window.game.World.HOME));
 
 // ---- shovel
@@ -215,38 +220,6 @@ await G(() => { window.game.G.mkt.left = 0.05; window.game.sim(0.1); window.game
 s = await G(() => ({ chip: document.querySelector('#event').hidden, open: window.game.G.mkt.left > 0, next: window.game.G.mkt.next }));
 check('the market packs up and the next one is scheduled', s.chip && !s.open && s.next > 600, s);
 await G(() => window.game.World.teleport(window.game.World.HOME));
-
-// ---- the other gardens: walk up to a neighbor's ripe fruit and pay to steal it; their garden moves out and a new one moves in
-const target = await G(() => {
-  const g = window.game; g.G.money = 1e15;
-  let best = null;
-  for (const nb of g.Neighbors.neighbors) for (const pl of nb.plants) pl.fr.forEach((f, k) => { if (f && f.p >= 1 && (!best || g.State.stealPrice(pl, k) < best.price)) best = { nb, pl, k, price: g.State.stealPrice(pl, k) }; });
-  const R = best.nb.R;
-  g.World.teleport({ x: best.pl.x, z: best.pl.z + (R.face < 0 ? 3 : -3) }, R.face < 0 ? Math.PI : 0, R.face < 0 ? 0 : Math.PI);
-  return { name: best.nb.name, plot: best.nb.plot };
-});
-await page.waitForTimeout(600); await tick();
-s = await G(() => ({ lbl: document.querySelector('#act .lbl').textContent, sub: document.querySelector('#prompt small').textContent }));
-check("a Steal button with a price shows next to a neighbor's ripe fruit", s.lbl === 'Steal' && /\$/.test(s.sub), s);
-await shot('11_steal_prompt');
-const m1 = await G(() => window.game.G.money), b1 = await G(() => window.game.G.bag.length);
-await page.click('#act');
-await page.waitForTimeout(400);
-s = await G(() => document.querySelector('#dialog .box div').innerText);
-check('stealing asks first, naming the owner', s.includes(target.name + "'s") && /move away/.test(s), s);
-await page.click('#dialog .btns button:last-child');
-s = await G((m1) => ({ paid: m1 - window.game.G.money, bag: window.game.G.bag.length, item: window.game.G.bag[window.game.G.bag.length - 1] }), m1);
-check('the stolen fruit costs half its worth and goes in your basket', s.paid > 0 && Math.abs(s.paid - s.item.v / 2) <= Math.max(1, s.item.v * 0.06) && s.bag === b1 + 1, s);
-for (let i = 0; i < 20 && (await G((pl) => !!window.game.Neighbors.neighbors[pl], target.plot)); i++) await G(() => window.game.Neighbors.update(0.5));
-s = await G(() => [...document.querySelectorAll('.toast')].map((t) => t.textContent));
-check('the garden you stole from moves out', (await G((pl) => window.game.Neighbors.neighbors[pl] === null, target.plot)) && s.some((t) => t.includes(target.name + "'s garden moved out")), s);
-for (let i = 0; i < 60 && !(await G((pl) => !!window.game.Neighbors.neighbors[pl], target.plot)); i++) await G(() => window.game.Neighbors.update(0.5));
-s = await G((pl) => { const nb = window.game.Neighbors.neighbors[pl]; return nb && { name: nb.name, plants: nb.plants.length }; }, target.plot);
-check('a new garden moves in', !!s && s.name !== target.name && s.plants >= 8, s);
-await G(() => { const g = window.game, nb = g.Neighbors.neighbors.find(Boolean), pl = nb.plants.find((p) => p.fr.some((f) => f && f.p >= 1)); g.State.steal(nb, pl, pl.fr.findIndex((f) => f && f.p >= 1)); });
-s = await G(() => ({ bag: window.game.G.bag.length, toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) }));
-check('you have to lie low before stealing again', s.bag === b1 + 1 && s.toasts.some((t) => t.startsWith('Lie low')), s);
-await G(() => { window.game.G.bag = []; window.game.World.teleport(window.game.World.HOME); });
 
 // ---- rain mutations
 await G(() => { window.game.G.seeds.strawberry = 1; window.game.G.sel = 'seed:strawberry'; });

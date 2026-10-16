@@ -3,7 +3,6 @@ import * as State from './state.js';
 import { G, load, save, on } from './state.js';
 import { update as sim, catchUp } from './sim.js';
 import * as World from './world.js';
-import * as Neighbors from './neighbors.js';
 import { makeIcons } from './icons.js';
 import * as UI from './ui.js';
 import { resumeAudio, setNight } from './audio.js';
@@ -12,7 +11,6 @@ const app = document.getElementById('app');
 // a sliding sheet or a focused button must never scroll the game layer out from under your thumb
 app.addEventListener('scroll', () => { app.scrollTop = 0; app.scrollLeft = 0; });
 const away = load();
-Neighbors.init();
 World.init(app);
 makeIcons();
 UI.build(app);
@@ -37,12 +35,11 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (running) for (let k = 0; k < (window.game.speed || 1); k++) sim(dt);
-  if (running) Neighbors.update(dt);
   World.update(dt, UI.input);
   UI.update(dt);
   setNight(World.env.night > 0.5);
   if ((saveT += dt) > 5) { saveT = 0; save(); }
   requestAnimationFrame(frame);
 }
-window.game = { get G() { return State.G; }, sim, save, speed: 1, World, UI, State, Neighbors };
+window.game = { get G() { return State.G; }, sim, save, speed: 1, World, UI, State };
 requestAnimationFrame(frame);

@@ -1,7 +1,7 @@
 {
-  "name": "Grow a Garden",
-  "short_name": "Garden",
-  "description": "A cozy pixel-art garden to grow, harvest and sell.",
+  "name": "Sky Garden",
+  "short_name": "Sky Garden",
+  "description": "Grow a garden on your own floating island in the sky.",
   "start_url": "./index.html",
   "display": "fullscreen",
   "orientation": "portrait",

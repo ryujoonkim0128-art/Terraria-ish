@@ -1,11 +1,11 @@
-// The 3D world: the map, a third-person camera that follows your farmer, movement and collisions,
-// plants and fruit (instanced), the other gardens on the street, Market Day dressing, weather, sky, effects and picking.
-import { CROP, BED, PLOTS, inRect, plotHome } from './data.js';
+// The 3D world: your sky island and everything on it, a third-person camera that follows your farmer, movement and
+// collisions, plants and fruit (instanced), Market Day dressing, weather, sky, effects and picking.
+import { CROP, BED, inRect } from './data.js';
 import { G, on, marketOpen } from './state.js';
-import { neighbors } from './neighbors.js';
 import { dayFrac, bloodMoon } from './sim.js';
 import { Vox, mesh, chunks, rng, hash, hex, shade, Batcher } from './voxel.js';
 import * as M from './models.js';
+import { buildIsland, landAt, islandS, water, POND, FALLS } from './island.js';
 
 const T = window.THREE;
 export const W = { t: 0 };
@@ -18,19 +18,15 @@ export const SHOPS = {
   sell: { x: 14, z: -72, spot: { x: 14, z: -58 }, name: 'Sell' },
 };
 export const HOME = { x: 0, z: BED.z1 + 9 };
-// the market street runs past all six gardens
-const PLAZA = { x0: -114, x1: 114, z0: -92, z1: -50 };
+const PLAZA = { x0: -40, x1: 40, z0: -92, z1: -50 };
 // Market Day: two pop-up carts beside the stalls and a maypole in the middle of the plaza
 export const CARTS = { veg: { x: -31, z: -71 }, berry: { x: 31, z: -71 } };
 const MAYPOLE = { x: 0, z: -62 };
-export const BOUNDS = { x0: -124, x1: 124, z0: -192, z1: 74 };
-// every garden on the street, yours first; the soil and the plank border round it sit a step above the lawn
-const BEDS = [{ ...BED, cx: 0, face: -1 }, ...PLOTS];
-export const onAnyBed = (x, z) => BEDS.some((R) => inRect(R, x, z, -1));
+// the soil and the plank border round it both sit a step above the lawn
+export const onAnyBed = (x, z) => inRect(BED, x, z, -1);
 export const groundY = (x, z) => (onAnyBed(x, z) ? TOP : 1);
 
-let renderer, scene, cam, sun, hemi, skyC, skyG, plants, fruits, partMesh, rainMesh, snowMesh, trailMesh, arrow, ring, ghostRing, bolt, heldMesh, mats;
-const plotSigns = [];
+let renderer, scene, cam, sun, hemi, skyC, skyG, plants, fruits, partMesh, rainMesh, snowMesh, trailMesh, arrow, ring, ghostRing, bolt, heldMesh, mats, islandTick;
 const parts = [], drops = [], flakes = [], anims = new Map(), lanternGlows = [], colliders = [], balloons = [];
 let market = null;
 const shopBoxes = {};
@@ -84,27 +80,21 @@ export function init(host) {
   bolt = new T.Mesh(M.boltGeo(60), mats.basic); bolt.visible = false; scene.add(bolt);
   buildMarket();
   on('reset', () => anims.clear());
-  // gardens moving in and out next door, and fruit stolen from them
-  on('movein', (nb) => nb.plants.forEach((pl, i) => pop(pl, 'plant', 0.3 + i * 0.06)));
-  on('moveout', (nb) => { for (const pl of nb.plants) burst(pl.x, TOP + 3, pl.z, ['#5cc060', '#8ff06a', '#a8744a', '#ffffff'], 6, { speed: 6, up: 9, life: 0.6, size: 0.45, delay: 0.5 }); });
-  on('steal', ({ at, pl }) => { const w = at || { x: pl.x, y: TOP + 3, z: pl.z }; burst(w.x, w.y, w.z, ['#ffd84e', '#ffffff', '#ff6a8a'], 14, { speed: 7, up: 9, life: 0.6, size: 0.4 }); });
   snapCamera();
 }
 
-// The flat ground is one big square with a texel per voxel; only blocks that stick up are meshed.
-const GROUND = 512;
+// The island's top is one flat square with a texel per voxel, see-through off the island; only blocks that stick up are
+// meshed, and the cliffs and rock underneath come from island.js.
+const GROUND = 256;
 const onGround = (x, y) => y <= 0;
-// a path from each garden's street side to the plaza
-const onPath = (x, z) => BEDS.some((R) => Math.abs(x - R.cx) <= 3 && (R.face < 0 ? z > PLAZA.z1 && z < R.z0 - 1 : z < PLAZA.z0 && z > R.z1 + 1));
-const tiled = (x, z) => (x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1) || onPath(x, z);
-// the grass repeats every 64 cells, so the endless lawn past the painted square matches it exactly
-const GRASS = 64;
+const tiled = (x, z) => (x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1) || (Math.abs(x) <= 3 && z > PLAZA.z1 && z < BED.z0 - 1);
 function grass(x, z) {
-  x &= GRASS - 1; z &= GRASS - 1;
-  const h = hash(x, z, 1);
-  return shade(h < 0.05 ? '#5aae58' : h > 0.97 ? '#8ad87a' : '#78cc6c', 1 + (hash(x, z, 11) - 0.5) * 0.12);
+  const h = hash(x, z, 1), rim = Math.max(0, (islandS(x, z) - 0.86) / 0.14);
+  return shade(h < 0.05 ? '#5aae58' : h > 0.97 ? '#8ad87a' : '#78cc6c', 1 + (hash(x, z, 11) - 0.5) * 0.12 + rim * 0.1);
 }
 function groundColor(x, z) {
+  if (!landAt(x, z)) return null;
+  if (water(x, z)) return shade(hash(x, z, 5) < 0.12 ? '#8fd0ff' : '#4aa8e8', 1 + (hash(x, z, 6) - 0.5) * 0.08);
   if (tiled(x, z)) {
     const plaza = x >= PLAZA.x0 && x <= PLAZA.x1, tile = plaza && z <= PLAZA.z1 ? ((Math.floor(x / 3) + Math.floor(z / 3)) & 1) : ((x + z) & 1);
     return shade(hash(x, z) < 0.08 ? '#c8ae86' : tile ? '#ead6b0' : '#e0c9a0', 1 + (hash(x, z, 11) - 0.5) * 0.06);
@@ -119,6 +109,7 @@ function paint(n, x0, z0, colorAt, dark = null) {
   const g = c.getContext('2d'), img = g.createImageData(n, n), d = img.data;
   for (let pz = 0; pz < n; pz++) for (let px = 0; px < n; px++) {
     const col = colorAt(px + x0, pz + z0), k = dark ? dark[pz * n + px] : 1, i = (pz * n + px) * 4;
+    if (col === null) { d[i + 3] = 0; continue; }
     d[i] = (col >> 16) * k; d[i + 1] = ((col >> 8) & 255) * k; d[i + 2] = (col & 255) * k; d[i + 3] = 255;
   }
   g.putImageData(img, 0, 0);
@@ -130,24 +121,30 @@ function paint(n, x0, z0, colorAt, dark = null) {
 function floor(size, tex, y) {
   const geo = new T.PlaneGeometry(size, size);
   geo.rotateX(-Math.PI / 2); geo.translate(-0.5, y, -0.5);
-  const m = new T.Mesh(geo, new T.MeshLambertMaterial({ map: tex }));
+  const m = new T.Mesh(geo, new T.MeshLambertMaterial({ map: tex, alphaTest: 0.5 }));
   m.receiveShadow = true; scene.add(m);
   return geo;
 }
 function buildTerrain() {
   const V = new Vox(rng(12));
-  // every planter: soil, a plank border and a post at each corner
-  for (const R of BEDS) {
-    for (let x = R.x0 - 1; x <= R.x1 + 1; x++) for (let z = R.z0 - 1; z <= R.z1 + 1; z++) {
-      if (inRect(R, x, z)) { V.set(x, 1, z, hash(x, z, 3) < 0.15 ? '#7e4e30' : '#8e5c3a', 0.06); continue; }
-      const along = x === R.x0 - 1 || x === R.x1 + 1 ? z : x;
-      V.set(x, 1, z, Math.floor((along + 512) / 3) & 1 ? '#c8945e' : '#b8844e', 0.03);
-    }
-    for (const x of [R.x0 - 1, R.x1 + 1]) for (const z of [R.z0 - 1, R.z1 + 1]) { V.set(x, 2, z, '#8a5a3a', 0.02); V.set(x, 3, z, '#a87048', 0.02); }
+  // your planter: soil, a plank border and a post at each corner
+  const R = BED;
+  for (let x = R.x0 - 1; x <= R.x1 + 1; x++) for (let z = R.z0 - 1; z <= R.z1 + 1; z++) {
+    if (inRect(R, x, z)) { V.set(x, 1, z, hash(x, z, 3) < 0.15 ? '#7e4e30' : '#8e5c3a', 0.06); continue; }
+    const along = x === R.x0 - 1 || x === R.x1 + 1 ? z : x;
+    V.set(x, 1, z, Math.floor((along + 64) / 3) & 1 ? '#c8945e' : '#b8844e', 0.03);
   }
-  // kerb around the plaza, open where each path comes in
-  for (let x = PLAZA.x0 - 1; x <= PLAZA.x1 + 1; x++) for (const z of [PLAZA.z0 - 1, PLAZA.z1 + 1]) if (!onPath(x, z)) V.set(x, 1, z, '#c8b48a', 0.03);
+  for (const x of [R.x0 - 1, R.x1 + 1]) for (const z of [R.z0 - 1, R.z1 + 1]) { V.set(x, 2, z, '#8a5a3a', 0.02); V.set(x, 3, z, '#a87048', 0.02); }
+  // kerb around the plaza (open where the path comes in)
+  for (let x = PLAZA.x0 - 1; x <= PLAZA.x1 + 1; x++) for (const z of [PLAZA.z0 - 1, PLAZA.z1 + 1]) if (Math.abs(x) > 3 || z === PLAZA.z0 - 1) V.set(x, 1, z, '#c8b48a', 0.03);
   for (let z = PLAZA.z0; z <= PLAZA.z1; z++) for (const x of [PLAZA.x0 - 1, PLAZA.x1 + 1]) V.set(x, 1, z, '#c8b48a', 0.03);
+  // wild flowers and tufts of grass over the lawn, thicker toward the edge
+  for (let x = -110; x <= 110; x++) for (let z = -128; z <= 80; z++) {
+    if (!landAt(x, z) || water(x, z) || tiled(x, z) || onAnyBed(x, z) || islandS(x, z) > 0.97 || Math.abs(x) < 9 && z > BED.z1 && z < BED.z1 + 14) continue;
+    const h = hash(x, z, 1), rim = islandS(x, z) > 0.8 ? 2 : 1;
+    if (h > 1 - 0.006 * rim) V.set(x, 1, z, ['#ffffff', '#ffd84e', '#ff8ab0', '#a8c8ff', '#ffb0e0'][Math.floor(hash(x, z, 9) * 5)], 0);
+    else if (h < 0.004 * rim) V.set(x, 1, z, '#5cb860', 0.05);
+  }
   // paint the floor, with a soft contact shadow around everything that sticks up
   const N = GROUND, H = N / 2, dark = new Float32Array(N * N).fill(1);
   for (const [x, , z] of V.m.values()) for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
@@ -155,23 +152,20 @@ function buildTerrain() {
     if (i >= 0 && i < N * N) dark[i] = Math.min(dark[i], dx && dz ? 0.9 : 0.8);
   }
   floor(N, paint(N, -H, -H, groundColor, dark), 1);
-  // and an endless lawn just beneath it, the same grass tiled out to the horizon
-  const lawn = paint(GRASS, 0, 0, grass), L = 1024;
-  lawn.wrapS = lawn.wrapT = T.RepeatWrapping;
-  const geo = floor(L, lawn, 0.97), pos = geo.attributes.position, uv = geo.attributes.uv;
-  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + 0.5) / GRASS, 1 - (pos.getZ(i) + 0.5) / GRASS);
   for (const geo2 of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo2, mats.vox); m.receiveShadow = true; scene.add(m); }
+  // the cliffs and rock under it all, the waterfall, the islets and clouds around
+  islandTick = buildIsland(scene, mats.vox);
+  colliders.push({ x: POND.x - 0.5, z: POND.z - 0.5, r: POND.rx - 0.5 });
 }
 
 function buildProps() {
   const V = new Vox(rng(77));
-  // lamps beside every garden path, at the ends of the street and at the front corners of your garden
-  const lamps = [[PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [BED.x0 - 4, BED.z1 + 4], [BED.x1 + 4, BED.z1 + 4]];
-  for (const R of BEDS) lamps.push([R.cx - 7, R.face < 0 ? R.z0 - 10 : R.z1 + 10]);
+  // lamps along the path, round the plaza and at the front corners of your garden
+  const lamps = [[-7, BED.z0 - 10], [PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [BED.x0 - 4, BED.z1 + 4], [BED.x1 + 4, BED.z1 + 4]];
   for (const [x, z] of lamps) { M.drawLamp(V, x, 1, z); colliders.push({ x, z, r: 0.8 }); addGlow(x, 10.5, z, 0xffd27a, 16); addLampHead(x, 9.5, z); }
   // plaza dressing
-  for (const [x, z] of [[-30, -60], [30, -60], [-30, -82], [30, -82], [-56, -71], [56, -71], [-100, -71], [100, -71]]) { M.drawFlowerbed(V, x, 1, z, 5); colliders.push({ x0: x - 5.5, x1: x + 5.5, z0: z - 1.5, z1: z + 1.5 }); }
-  for (const [x, z] of [[-22, -54], [22, -54], [-56, -54], [56, -54], [-56, -88], [56, -88]]) { M.drawBench(V, x, 1, z); colliders.push({ x0: x - 2.5, x1: x + 2.5, z0: z - 0.5, z1: z + 1.5 }); }
+  for (const [x, z] of [[-30, -60], [30, -60], [-30, -82], [30, -82]]) { M.drawFlowerbed(V, x, 1, z, 5); colliders.push({ x0: x - 5.5, x1: x + 5.5, z0: z - 1.5, z1: z + 1.5 }); }
+  for (const [x, z] of [[-22, -54], [22, -54]]) { M.drawBench(V, x, 1, z); colliders.push({ x0: x - 2.5, x1: x + 2.5, z0: z - 0.5, z1: z + 1.5 }); }
   M.drawFlowerbed(V, 0, 1, -86, 8);
   colliders.push({ x0: -8.5, x1: 8.5, z0: -87.5, z1: -84.5 });
   // two signboards either side of the way into your garden, read together: YOUR GARDEN / GROWS EVEN WHILE OFFLINE
@@ -180,16 +174,9 @@ function buildProps() {
     V.box(x0, 1, z, x0, 4, z, '#8a5a3a', 0.03); V.box(x1, 1, z, x1, 4, z, '#8a5a3a', 0.03);
     colliders.push({ x0: x0 - 1, x1: x1 + 1, z0: z - 0.6, z1: z + 0.6 });
   }
-  // each other garden has its owner's name up by the street, facing it
-  const named = PLOTS.map((R) => { const sx = R.cx + (R.face < 0 ? 12 : -12), sz = R.face < 0 ? R.z0 - 5 : R.z1 + 5; V.box(sx - 5, 1, sz, sx - 5, 4, sz, '#8a5a3a', 0.03); V.box(sx + 5, 1, sz, sx + 5, 4, sz, '#8a5a3a', 0.03); colliders.push({ x0: sx - 6, x1: sx + 6, z0: sz - 0.6, z1: sz + 0.6 }); return { sx, sz, R }; });
   for (const geo of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo, mats.vox); m.castShadow = true; m.receiveShadow = true; scene.add(m); }
   sign('YOUR GARDEN', -8, 5.6, z + 0.6, 8, '#c8904a');
   sign(['GROWS EVEN', 'WHILE OFFLINE'], 8.5, 6.3, z + 0.6, 9, '#5aa848', scene, 3.4);
-  for (const { sx, sz, R } of named) plotSigns.push(sign(['', 'GARDEN'], sx, 6.6, sz + (R.face < 0 ? -0.6 : 0.6), 12, '#c8904a', scene, 4.4, R.face < 0 ? Math.PI : 0));
-}
-// the name on a garden's sign follows whoever owns it
-function renameSigns() {
-  PLOTS.forEach((_, i) => { const nb = neighbors[i], k = nb ? nb.name : ''; if (plotSigns[i].k !== k) { plotSigns[i].k = k; plotSigns[i].set(nb ? [nb.name + "'s", 'GARDEN'] : ['EMPTY', 'PLOT']); } });
 }
 function addLampHead(x, y, z) {
   const l = new T.Mesh(M.lanternGeo(), mats.basic);
@@ -199,13 +186,12 @@ function addGlow(x, y, z, col, s) {
   const g = new T.Sprite(new T.SpriteMaterial({ map: glowTex(), color: col, transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
   g.position.set(x + 0.5, y, z + 0.5); g.scale.set(s, s, 1); scene.add(g); lanternGlows.push(g);
 }
-// white lettering on a coloured board: one line, or an array of lines sharing one size; tex.setText redraws it
+// white lettering on a coloured board: one line, or an array of lines sharing one size
 function textTexture(text, bg, w = 512, h = 128) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d');
   const tex = new T.CanvasTexture(c); tex.encoding = T.sRGBEncoding;
-  let lines = [].concat(text), lh = h / lines.length;
-  tex.setText = (t) => { lines = [].concat(t); lh = h / lines.length; draw(); };
+  const lines = [].concat(text), lh = h / lines.length;
   const draw = () => {
     g.fillStyle = bg; g.fillRect(0, 0, w, h);
     g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, h - lh / 12, w, lh / 12);
@@ -222,15 +208,11 @@ function textTexture(text, bg, w = 512, h = 128) {
   if (document.fonts) document.fonts.ready.then(draw);
   return tex;
 }
-// a signboard facing +z (or turned by yaw); returns something that can change what it says
-function sign(text, x, y, z, w, bg, parent = scene, h = w / 4, yaw = 0) {
-  const grp = new T.Group(); grp.position.set(x, y, z); grp.rotation.y = yaw; parent.add(grp);
+function sign(text, x, y, z, w, bg, parent = scene, h = w / 4) {
   const board = new T.Mesh(new T.BoxGeometry(w, h, 0.6), new T.MeshLambertMaterial({ color: 0x8a5a3a }));
-  board.position.z = -0.35; board.castShadow = true; grp.add(board);
-  const tex = textTexture(text, bg, 512, Math.round((512 * (h - 0.4)) / (w - 0.4)));
-  const face = new T.Mesh(new T.PlaneGeometry(w - 0.4, h - 0.4), new T.MeshLambertMaterial({ map: tex }));
-  face.position.z = -0.03; grp.add(face);
-  return { set: tex.setText };
+  board.position.set(x, y, z - 0.35); board.castShadow = true; parent.add(board);
+  const face = new T.Mesh(new T.PlaneGeometry(w - 0.4, h - 0.4), new T.MeshLambertMaterial({ map: textTexture(text, bg, 512, Math.round((512 * (h - 0.4)) / (w - 0.4))) }));
+  face.position.set(x, y, z - 0.03); parent.add(face);
 }
 function buildShops() {
   for (const kind of ['seeds', 'sell']) {
@@ -346,7 +328,14 @@ function collide(o, r) {
       }
     }
   }
-  o.x = Math.max(BOUNDS.x0, Math.min(BOUNDS.x1, o.x)); o.z = Math.max(BOUNDS.z0, Math.min(BOUNDS.z1, o.z));
+}
+// the farmer stays a couple of steps in from the edge, sliding along it
+const EDGE = 0.95;
+function keepOnIsland(o, px, pz) {
+  if (islandS(o.x, o.z) < EDGE) return;
+  if (islandS(o.x, pz) < EDGE) o.z = pz;
+  else if (islandS(px, o.z) < EDGE) o.x = px;
+  else { o.x = px; o.z = pz; }
 }
 function movePlayer(dt, ix, iy) {
   const p = W.player;
@@ -357,17 +346,19 @@ function movePlayer(dt, ix, iy) {
   const k = 1 - Math.exp(-dt * 14);
   p.vx += (tvx - p.vx) * k; p.vz += (tvz - p.vz) * k;
   const v = Math.hypot(p.vx, p.vz);
+  const px = p.x, pz = p.z;
   p.x += p.vx * dt; p.z += p.vz * dt;
   collide(p, 1.1);
+  keepOnIsland(p, px, pz);
   if (v > 0.8) { p.dir = angLerp(p.dir, Math.atan2(p.vx, p.vz), 1 - Math.exp(-dt * 16)); p.walk += dt * v * 0.75; p.moving = v; } else { p.moving = 0; p.walk = 0; }
   p.y += (groundY(p.x, p.z) - p.y) * (1 - Math.exp(-dt * 18));
   p.act = Math.max(0, p.act - dt);
 }
-export function teleport(spot, dir = Math.PI, yaw = 0) {
+export function teleport(spot, dir = Math.PI) {
   const p = W.player;
   burst(p.x, p.y + 4, p.z, ['#ffffff', '#bfe4ff', '#fff27a'], 20, { speed: 8, up: 10, life: 0.5, size: 0.5 });
   p.x = spot.x; p.z = spot.z; p.y = groundY(p.x, p.z); p.vx = p.vz = 0; p.dir = dir;
-  snapCamera(yaw);
+  snapCamera(0);
   burst(p.x, p.y + 4, p.z, ['#ffffff', '#bfe4ff', '#fff27a'], 24, { speed: 9, up: 12, life: 0.6, size: 0.5 });
 }
 export function faceTo(x, z) { const p = W.player; p.dir = Math.atan2(x - p.x, z - p.z); p.act = 0.25; }
@@ -382,16 +373,14 @@ const ray = new T.Raycaster(), ndc = new T.Vector2(), hitP = new T.Vector3(), bo
 function setRay(sx, sy) { ndc.set((sx / screen.w) * 2 - 1, -(sy / screen.h) * 2 + 1); ray.setFromCamera(ndc, cam); }
 export function groundPoint(sx, sy) { setRay(sx, sy); return ray.ray.intersectPlane(plane, hitP) ? { x: hitP.x, z: hitP.z } : null; }
 export const growth = (pl) => (CROP[pl.c].multi ? pl.g / CROP[pl.c].grow : pl.fr[0].p);
-// every garden that can be picked at: yours (owner null), then the neighbors'
-export const gardens = () => [{ owner: null, plants: G.plants }, ...neighbors.filter(Boolean).map((nb) => ({ owner: nb, plants: nb.plants }))];
 export function pickPlant(sx, sy) {
   setRay(sx, sy);
   let best = null, bd = 1e9;
-  for (const { owner, plants: list } of gardens()) for (const pl of list) {
+  for (const pl of G.plants) {
     const st = M.stageOf(Math.min(1, growth(pl))), h = plantH(pl, st), r = Math.max(1.4, Math.min(CROP[pl.c].r, h * 0.6));
     box.set(bmin.set(pl.x - r, TOP, pl.z - r), bmax.set(pl.x + r, TOP + h + 0.5, pl.z + r));
     const hit = ray.ray.intersectBox(box, hitP);
-    if (hit) { const d = hit.distanceTo(cam.position); if (d < bd) { bd = d; best = { pl, owner }; } }
+    if (hit) { const d = hit.distanceTo(cam.position); if (d < bd) { bd = d; best = pl; } }
   }
   return best;
 }
@@ -399,12 +388,12 @@ const fp = new T.Vector3();
 export function pickFruit(sx, sy) {
   setRay(sx, sy);
   let best = null, bd = 1e9;
-  for (const { owner, plants: list } of gardens()) for (const pl of list) for (let k = 0; k < (pl._fw || []).length; k++) {
+  for (const pl of G.plants) for (let k = 0; k < (pl._fw || []).length; k++) {
     const f = pl._fw[k];
     if (!f || !f.ripe) continue;
     fp.set(f.x, f.y + (f.sit ? 1 : -1), f.z);
     const d2 = ray.ray.distanceSqToPoint(fp);
-    if (d2 < 3.2 && d2 < bd) { bd = d2; best = { pl, k, owner }; }
+    if (d2 < 3.2 && d2 < bd) { bd = d2; best = { pl, k }; }
   }
   return best;
 }
@@ -559,7 +548,6 @@ function drawFarmer(meshes, o, held) {
     }
   }
 }
-const frustum = new T.Frustum();
 const SEEDCOL = { carrot: '#ff8a2a', strawberry: '#f03a4e', blueberry: '#4a5ae0', tulip: '#ff8a3a', tomato: '#f04a32', corn: '#ffd84e', watermelon: '#6ac85a', pumpkin: '#ff9a2a', apple: '#e8383e', coconut: '#6e4428', dragonfruit: '#e8408f', mango: '#ffb43a', grape: '#8a4ad0', mushroom: '#e0383a', beanstalk: '#7ae05a' };
 export const seedColor = (c) => SEEDCOL[c] || '#c8a86a';
 
@@ -588,6 +576,9 @@ export function update(dt, input = { x: 0, y: 0 }) {
   if (bloodMoon()) { sun.color.lerp(ca.set('#ff5060'), env.night * 0.6); hemi.color.lerp(ca.set('#a04050'), env.night * 0.5); }
   hemi.groundColor.set(env.night > 0.5 ? '#202840' : '#6a8a5a');
   drawSky(d, dt);
+  islandTick(dt, t, 1 - env.night * 0.65);
+  // spray where the stream tips over the edge
+  if (Math.random() < dt * 6) parts.push({ x: FALLS.x + 0.3, y: 1.4, z: FALLS.z + (Math.random() - 0.5) * FALLS.w, vx: 2 + Math.random() * 2, vy: 1 + Math.random() * 2, vz: (Math.random() - 0.5) * 2, g: 14, t: 0, life: 0.9, s: 0.4, col: '#e8f7ff', seed: 1 });
   const glowOn = Math.max(env.night, env.storm * 0.5);
   lanternGlows.forEach((gl) => { gl.material.opacity = glowOn * (0.8 + Math.sin(t * 3) * 0.05); gl.visible = gl.material.opacity > 0.02; });
   // Market Day dressing
@@ -599,12 +590,9 @@ export function update(dt, input = { x: 0, y: 0 }) {
   }
   const held = G.sel === 'shovel' ? 'shovel' : G.sel && G.sel.startsWith('seed:') ? seedColor(G.sel.slice(5)) : null;
   drawFarmer(playerMeshes, p, held);
-  renameSigns();
-  // plants and fruit, skipping gardens the camera can't see
-  frustum.setFromProjectionMatrix(m4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+  // plants and fruit
   plants.begin(); fruits.begin();
   drawPlants(G.plants, dt, t);
-  for (const nb of neighbors) if (nb && frustum.intersectsBox(box.set(bmin.set(nb.R.x0 - 6, 0, nb.R.z0 - 6), bmax.set(nb.R.x1 + 6, 30, nb.R.z1 + 6)))) drawPlants(nb.plants, dt, t);
   plants.end(); fruits.end();
   // particles
   if (env.night > 0.4 && Math.random() < dt * 5) parts.push({ x: cs.tx + (Math.random() - 0.5) * 80, y: 3 + Math.random() * 6, z: cs.tz + (Math.random() - 0.5) * 80, vx: (Math.random() - 0.5) * 2, vy: 0.4, vz: (Math.random() - 0.5) * 2, g: 0, t: 0, life: 3, s: 0.3, col: '#e8ff7a', blink: true });
@@ -666,5 +654,17 @@ export function update(dt, input = { x: 0, y: 0 }) {
       trailMesh.count = m; trailMesh.instanceMatrix.needsUpdate = true;
     }
   }
+  // the title screen circles the whole island from out in the sky
+  if (titleCam) {
+    const a = t * 0.05 + titleA;
+    cam.position.set(Math.sin(a) * 175, 34, -30 + Math.cos(a) * 175); cam.lookAt(0, -10, -30); cam.updateMatrixWorld();
+  }
   renderer.render(scene, cam);
+}
+let titleCam = false, titleA = 2.2;
+export function titleView(on, a = 2.2) {
+  titleCam = on; titleA = a - W.t * 0.05;
+  scene.fog.near = on ? 320 : 80; scene.fog.far = on ? 1100 : 175;
+  cam.far = on ? 1200 : 240; cam.updateProjectionMatrix();
+  if (!on) snapCamera();
 }

@@ -1,25 +1,20 @@
 // The economy, simulated. An attentive player starts fresh, picks fruit the moment it ripens, sells at once,
 // and always buys the best seed they can afford that is in stock (digging up their weakest plant once the
 // garden is full). Restocks, fruit sizes, Gold and Rainbow, rain, snow and lightning are rolled like the game,
-// and so is Market Day (the crop of the day sells for triple, the carts sell seeds a quarter off) and stealing (every
-// ten minutes they steal the most valuable fruit they can afford from the five gardens next door).
+// and so is Market Day: the crop of the day sells for triple and the carts sell seeds a quarter off.
 //   node test/economy.mjs [runs]          when each seed first becomes yours, with the values in src/data.js
 //   node test/economy.mjs --tune [runs]   find each crop's sell value so the gaps between seeds hit TARGET
 //   --casual                               a player who does a round of the garden every half minute and goes to the
 //                                          shops every few, instead of collecting, selling and buying the instant they can
-//   --no-steal                             a player who never steals
 import { CROPS, RARITIES, RESTOCK, MAX_PLANTS, MARKET_LEN, MARKET_GAP, POOLS } from '../src/data.js';
 
-// minutes from one seed to the next, for an attentive player who steals whenever they can: Strawberry comes with the
-// tutorial (two carrots pay for it), then 4 more to Blueberry, 9 more to Tulip, and longer and longer after that
+// minutes from one seed to the next, a little under the first schedule: Strawberry comes with the tutorial (two
+// carrots pay for it), then 4 more to Blueberry, 9 more to Tulip, and longer and longer after that
 export const TARGET = [1, 4, 9, 13, 18, 23, 30, 37, 45, 54, 65, 77, 92, 108];
 const DT = 3;
 // how the player plays: a round of the garden every `look` seconds (collect and sell everything ripe; ripe fruit
 // waits on the plant until then) and a trip to the seed shop every `shop` seconds. 0 means the instant they could.
 const PLAYER = process.argv.includes('--casual') ? { look: 30, shop: 150 } : { look: 0, shop: 0 };
-const STEAL = !process.argv.includes('--no-steal');
-// what fruit next door is worth: the values in src/data.js (fixed while tuning, so the next pass can use this one's)
-const REF = CROPS.map((c) => c.value);
 
 function rnd(st) {
   st.r = (st.r + 0x6d2b79f5) >>> 0;
@@ -80,36 +75,8 @@ function marketTick(st, crops) {
 }
 const sale = (st, k) => (st.mkt.left > 0 && k === st.mkt.hot ? 3 : 1);
 
-// the gardens next door, as src/neighbors.js makes them: a few tiers ahead of yours, some fruit mutated
-function garden(st) {
-  const top = Math.max(0, ...st.plants.map((p) => p.k)), far = rnd(st) < 0.2, L = Math.min(14, Math.max(far ? 8 : 4, top + (far ? 7 : 3) + Math.floor(rnd(st) * 5)));
-  const tiers = [], fruit = [];
-  const add = (t, n) => { for (let i = 0; i < n; i++) tiers.push(Math.max(1, Math.min(14, t))); };
-  add(L, 1 + Math.floor(rnd(st) * 3)); add(L - 1, 2 + Math.floor(rnd(st) * 3));
-  for (let i = 6 + Math.floor(rnd(st) * 4); i--;) add(L - 2 - Math.floor(rnd(st) * 3), 1);
-  for (let i = 5 + Math.floor(rnd(st) * 5); i--;) add(1 + Math.floor(rnd(st) * 3), 1);
-  for (const t of tiers) for (let i = 0; i < (CROPS[t].n || 1); i++) {
-    let s = 0.85 + rnd(st) * 0.35; if (rnd(st) < 0.04) s *= 1.4 + rnd(st) * 0.8;
-    const r = rnd(st), g = r < 0.03 ? 50 : r < 0.13 ? 20 : 1, e = rnd(st);
-    let m = 1; if (e < 0.05) m += 9; else if (e < 0.27) m += 1; if (rnd(st) < 0.03) m += 99; if (rnd(st) < 0.06) m += rnd(st) < 0.25 ? 3 : 1;
-    fruit.push(REF[t] * s * s * g * m);
-  }
-  return fruit;
-}
-// walk into one of the gardens next door, pay half the best ripe fruit you can afford there and sell it; that garden
-// is replaced by a new one (about seven in ten of a garden's fruit is ripe at any moment)
-function steal(st) {
-  if (!st.gardens) st.gardens = [0, 1, 2, 3, 4].map(() => garden(st));
-  const i = Math.floor(rnd(st) * st.gardens.length);
-  let best = -1;
-  for (const v of st.gardens[i]) if (v / 2 <= st.money && v > best && rnd(st) < 0.7) best = v;
-  if (best < 0) return;
-  st.money += best / 2;
-  st.gardens[i] = garden(st);
-}
 function step(st, crops) {
   st.t += DT;
-  if (STEAL && st.t >= 120 && Math.floor(st.t / 600) !== Math.floor((st.t - DT) / 600)) steal(st);
   const per = Math.floor((st.t + st.off) / RESTOCK);
   if (per !== st.per) {
     st.per = per;
