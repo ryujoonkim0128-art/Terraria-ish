@@ -1,0 +1,7 @@
+{
+  "name": "grow-a-garden",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node test/smoke.mjs" },
+  "devDependencies": { "playwright": "1.56.1" }
+}
