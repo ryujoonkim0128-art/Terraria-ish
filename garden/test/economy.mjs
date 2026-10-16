@@ -96,14 +96,16 @@ function garden(st) {
   }
   return fruit;
 }
-// pay half the best fruit you can afford, sell it, and that garden is replaced by a new one
+// walk into one of the gardens next door, pay half the best ripe fruit you can afford there and sell it; that garden
+// is replaced by a new one (about seven in ten of a garden's fruit is ripe at any moment)
 function steal(st) {
   if (!st.gardens) st.gardens = [0, 1, 2, 3, 4].map(() => garden(st));
-  let best = -1, bg = -1;
-  st.gardens.forEach((g, i) => { for (const v of g) if (v / 2 <= st.money && v > best) { best = v; bg = i; } });
-  if (bg < 0) return;
+  const i = Math.floor(rnd(st) * st.gardens.length);
+  let best = -1;
+  for (const v of st.gardens[i]) if (v / 2 <= st.money && v > best && rnd(st) < 0.7) best = v;
+  if (best < 0) return;
   st.money += best / 2;
-  st.gardens[bg] = garden(st);
+  st.gardens[i] = garden(st);
 }
 function step(st, crops) {
   st.t += DT;
