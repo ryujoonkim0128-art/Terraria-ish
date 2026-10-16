@@ -1,7 +1,8 @@
 # Grow a Garden — voxel edition
 
-A mobile take on the Roblox game *Grow a Garden*, built as a little 3D voxel diorama. Plant anywhere on your
-garden bed, watch crops grow (even while you're away), harvest, sell at the stall, and buy rarer seeds.
+A mobile take on the Roblox game *Grow a Garden*, built as a little 3D voxel world. Walk your farmer around
+with a thumbstick, plant anywhere on your garden bed, watch crops grow (even while you're away), collect the
+fruit, then teleport to the Sell and Seeds stands.
 
 No build step. Three.js r128 is vendored in `vendor/`; everything else is plain ES modules.
 
@@ -16,31 +17,37 @@ Add it to your home screen for fullscreen. Progress saves on the device.
 
 | | |
 |---|---|
-| **Plant** | Pick a seed in the hotbar, tap anywhere on the soil. Drag to plant a row. Plants need a little room. |
-| **Harvest** | Tap or swipe across ripe crops (they sparkle), or press the green basket button. |
-| **Sell / buy** | Tap the **SELL** or **SEEDS** stall. Seeds restock every 5 minutes. Hold a buy button to buy many. |
-| **Look around** | Pinch to zoom, drag empty ground to pan. Tap a growing plant to see how long it has left. |
-| **Shovel** | The last hotbar slot. Tap a plant to dig it up. |
+| **Move** | Put your left thumb down anywhere on the lower left: a thumbstick appears under it. WASD or arrows on a keyboard. |
+| **Look around** | Drag on the right side to turn the camera, pinch (or scroll) to zoom. |
+| **Plant** | Pick a seed in the hotbar, tap anywhere on your soil. Plants need a little room. |
+| **Collect** | Walk up to ripe fruit: a **Collect** prompt pops up over it. Tap to pick one, hold to grab everything in reach (E or Space on a keyboard). You can also tap a ripe fruit that is close by. |
+| **Sell / buy** | The **Seeds**, **Sell** and **Garden** buttons at the top teleport you. Seeds restock every 5 minutes; hold a buy button to buy many. |
+| **Shovel** | The last hotbar slot. Tap a plant to dig it up. Tap a growing plant with nothing in hand to see how long it has left. |
 
 ## What's in it
 - 15 crops from Carrot to Beanstalk across 7 rarities, each a voxel model with 6 growth stages. Berries, trees
   and vines keep fruiting; every fruit rolls its own size (giants are worth much more).
 - Weather and time: a day/night cycle with stars and lanterns, rain, snow and thunderstorms. They mutate fruit:
   Wet, Chilled, Frozen, Shocked (lightning, x100), Moonlit, Bloodlit, plus rare Gold (x20) and Rainbow (x50).
-- A wordless tutorial: one objective chip, a bouncing arrow and glowing trail in the world, a pointing hand.
+- A wordless tutorial: plant, grow, collect, sell, buy, go home. One objective chip, a bouncing arrow and
+  glowing trail in the world, and a pointing hand that shows where to tap or which way to push the stick.
+- Two neighbours' gardens to walk past, and a market plaza with the two stands.
 - Offline growth (up to 8 hours), autosave, generative music, sound effects and haptics.
 
 ## Code map
-`src/voxel.js` voxel sets, the mesher (baked ambient occlusion), instanced batches ·
-`src/models.js` every crop, fruit, stall and character as voxels · `src/world.js` the 3D scene, camera, lighting,
-sky, weather, picking · `src/ui.js` HUD, hotbar, shop sheets, touch input, tutorial · `src/state.js` save data
+`src/voxel.js` voxel sets, the mesher (baked ambient occlusion), chunking, instanced batches ·
+`src/models.js` every crop, fruit, stall and character as voxels · `src/world.js` the map, third-person camera,
+movement and collisions, lighting, sky, weather, picking · `src/ui.js` HUD, joystick, Collect prompt, teleports,
+hotbar, shop sheets, tutorial · `src/state.js` save data
 and player actions · `src/sim.js` growth, weather, mutations · `src/data.js` crop table · `src/icons.js` voxel
 icons for the UI · `src/audio.js` WebAudio synth · `src/main.js` boot and loop.
 
 ## Tests
 `npm install`, then:
-- `node test/play.mjs` plays a fresh game on an emulated iPhone with real taps (tutorial, planting, drag
-  planting, spacing, harvesting, selling, buying, shovel, rain, save/reload) and checks every step.
+- `node test/play.mjs` plays a fresh game on an emulated iPhone with real input (tap planting and spacing,
+  walking with the thumbstick, the Collect prompt, tap and hold collecting, the teleport buttons, selling,
+  buying, the shop prompt, stall collisions, keyboard, camera drag, shovel, rain, save/reload) and checks
+  every step.
 - `node test/gallery.mjs` screenshots a full garden by day, sunset, night, snow and storm.
 - `node test/make-icon.mjs` regenerates `icon.png`.
 

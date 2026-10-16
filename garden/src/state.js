@@ -10,10 +10,10 @@ export const emit = (e, d) => (subs[e] || []).forEach((f) => f(d));
 const KEY = 'voxel-garden-save-v1';
 export function fresh() {
   return {
-    v: 1, seed: (Math.random() * 1e9) | 0,
+    v: 1, tv: 2, seed: (Math.random() * 1e9) | 0,
     money: 20, seeds: { carrot: 5 }, bag: [], plants: [], nextId: 1,
     time: DAY_LEN * 0.1, weather: { type: 'clear', left: 0 }, nextWeather: 200,
-    bought: { p: -1, c: {} }, tut: 0, sel: 'seed:carrot',
+    bought: { p: -1, c: {} }, tut: 0, sel: 'seed:carrot',  // tut 7 = tutorial finished
     stats: { harvested: 0, earned: 0, planted: 0, best: 0 },
     sound: true, music: true, saved: Date.now(),
   };
@@ -22,10 +22,12 @@ export function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { d = null; }
   if (!d || d.v !== 1 || !Array.isArray(d.plants)) { G = fresh(); return 0; }
+  if (!d.tv) { d.tut = d.tut >= 6 ? 7 : 0; d.tv = 2; } // the tutorial was rebuilt: finished stays finished
   G = Object.assign(fresh(), d);
   return Math.max(0, Math.min(8 * 3600, (Date.now() - (d.saved || Date.now())) / 1000));
 }
-export function save() { G.saved = Date.now(); try { localStorage.setItem(KEY, JSON.stringify(G)); } catch { /* storage blocked */ } }
+// keys starting with _ are per-frame scratch (like fruit positions) and never saved
+export function save() { G.saved = Date.now(); try { localStorage.setItem(KEY, JSON.stringify(G, (k, v) => (k[0] === '_' ? undefined : v))); } catch { /* storage blocked */ } }
 export function reset() { try { localStorage.removeItem(KEY); } catch { /* ignore */ } G = fresh(); emit('reset'); }
 
 // ---------- seed stock (restocks every RESTOCK seconds of real time)
@@ -49,7 +51,6 @@ export const inStock = (id) => Math.max(0, (stock()[id] || 0) - (G.bought.c[id] 
 export const ripeCount = (pl) => (pl ? pl.fr.reduce((n, f) => n + (f && f.p >= 1 ? 1 : 0), 0) : 0);
 export const totalRipe = () => G.plants.reduce((n, p) => n + ripeCount(p), 0);
 export const bagValue = () => G.bag.reduce((s, it) => s + it.v, 0);
-export const plantById = (id) => G.plants.find((p) => p.id === id);
 // Can a crop go at (x, z)? Returns null if fine, else a reason.
 export function placeBlock(crop, x, z) {
   const r = CROP[crop].r;
@@ -83,32 +84,20 @@ export function plant(crop, x, z) {
   emit('plant', pl);
   return pl;
 }
-export function harvest(pl) {
-  if (!pl) return [];
-  const c = CROP[pl.c], got = [];
-  for (let k = 0; k < pl.fr.length; k++) {
-    const f = pl.fr[k];
-    if (!f || f.p < 1) continue;
-    if (G.bag.length >= BASKET) { emit('bagfull'); break; }
-    const item = { c: pl.c, kg: +(c.kg * f.s).toFixed(3), m: f.m.slice(), v: fruitValue(pl.c, f.s, f.m), big: f.s > 1.3 };
-    G.bag.push(item);
-    got.push({ item, slot: k });
-    if (c.multi) { pl.fr[k] = null; pl.cd[k] = 2 + Math.random() * 2; }
-  }
-  if (got.length) {
-    G.stats.harvested += got.length;
-    if (!c.multi) G.plants = G.plants.filter((p) => p !== pl);
-    emit('harvest', { pl, got, removed: !c.multi });
-  }
-  return got;
-}
-export function harvestAll() {
-  const out = [];
-  for (const pl of [...G.plants]) {
-    if (G.bag.length >= BASKET) { emit('bagfull'); break; }
-    if (ripeCount(pl)) out.push(...harvest(pl));
-  }
-  return out;
+// pick one ripe fruit (slot k) off a plant
+export function collect(pl, k) {
+  const f = pl && pl.fr[k];
+  if (!f || f.p < 1) return null;
+  if (G.bag.length >= BASKET) { emit('bagfull'); return null; }
+  const c = CROP[pl.c];
+  const item = { c: pl.c, kg: +(c.kg * f.s).toFixed(3), m: f.m.slice(), v: fruitValue(pl.c, f.s, f.m), big: f.s > 1.3 };
+  const at = pl._fw && pl._fw[k];
+  G.bag.push(item);
+  G.stats.harvested++;
+  if (c.multi) { pl.fr[k] = null; pl.cd[k] = 2 + Math.random() * 2; }
+  else G.plants = G.plants.filter((p) => p !== pl);
+  emit('collect', { pl, k, item, at, removed: !c.multi });
+  return item;
 }
 export const itemKey = (it) => it.c + '|' + it.m.slice().sort().join(',');
 export function sell(filter) {

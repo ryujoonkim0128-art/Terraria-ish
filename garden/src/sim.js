@@ -24,7 +24,7 @@ export function update(dt, offline = false) {
     const w = G.weather;
     if (w.type !== 'clear') {
       if ((w.left -= dt) <= 0) { w.type = 'clear'; G.nextWeather = 160 + Math.random() * 120; emit('weather', 'clear'); }
-    } else if (G.tut >= 6 && (G.nextWeather -= dt) <= 0) {
+    } else if (G.tut >= 7 && (G.nextWeather -= dt) <= 0) {
       const r = Math.random();
       w.type = r < 0.45 ? 'rain' : r < 0.72 ? 'snow' : 'storm';
       w.left = 70 + Math.random() * 40;

@@ -1,120 +1,222 @@
-// The 3D world: scene, terrain, camera fitting, lighting and sky, weather, plants and fruit (instanced), effects, picking.
-import { CROP, BED, inBed, DAY_LEN } from './data.js';
-import { G, on, ripeCount } from './state.js';
-import { dayFrac, bloodMoon, isNight } from './sim.js';
-import { Vox, mesh, rng, hash, Batcher, shade } from './voxel.js';
+// The 3D world: the map, a third-person camera that follows your farmer, movement and collisions,
+// neighbours, plants and fruit (instanced), weather, sky, effects and picking.
+import { CROP, BED, inBed, bedR } from './data.js';
+import { G, on } from './state.js';
+import { dayFrac, bloodMoon } from './sim.js';
+import { Vox, mesh, chunks, rng, hash, hex, shade, Batcher } from './voxel.js';
 import * as M from './models.js';
 
 const T = window.THREE;
 export const W = { t: 0 };
-let renderer, scene, cam, sun, hemi, skyC, skyG, plants, fruits, partMesh, rainMesh, snowMesh, trailMesh, farmer, arrow, ring, ghost, ghostRing, bolt;
-const parts = [], drops = [], flakes = [], anims = new Map();
-const lanterns = [], lanternGlows = [], clouds = [], npcs = [], stallBoxes = {};
-export const env = { rain: 0, storm: 0, snow: 0, wet: 0, night: 0, wind: 1, flash: 0 };
+export const env = { rain: 0, storm: 0, snow: 0, night: 0, wind: 1, flash: 0 };
 const TOP = BED.top;
-const view = { zoom: 1, px: 0, pz: 0, base: null };
+
+// ---------------------------------------------------------------- map layout
+export const SHOPS = {
+  seeds: { x: -14, z: -72, spot: { x: -14, z: -58 }, name: 'Seeds' },
+  sell: { x: 14, z: -72, spot: { x: 14, z: -58 }, name: 'Sell' },
+};
+export const HOME = { x: 0, z: 35 };
+const PLAZA = { x0: -40, x1: 40, z0: -92, z1: -50 };
+const NEIGHBORS = [
+  { x: -66, z: -4, rx: 18, rz: 20, name: 'PixelPete', pal: { shirt: '#5aa0ff', pants: '#3a4a6a', hat: '#ff8a3a', band: '#ffffff', hair: '#2a1a14', skin: '#d99a6a' } },
+  { x: 66, z: -4, rx: 18, rz: 20, name: 'BerryBella', pal: { shirt: '#ff7ab0', pants: '#7a4ac8', hat: '#ffffff', band: '#ff7ab0', hair: '#e8c06a', skin: '#ffd8b8' } },
+];
+export const BOUNDS = { x0: -112, x1: 112, z0: -112, z1: 92 };
+const inNb = (nb, x, z, m = 0) => { const dx = (x - nb.x) / nb.rx, dz = (z - nb.z) / nb.rz; return Math.hypot(dx, dz) < bedR(Math.atan2(dz, dx)) - m / nb.rx; };
+export const onAnyBed = (x, z) => inBed(x, z) || NEIGHBORS.some((nb) => inNb(nb, x, z));
+export const groundY = (x, z) => (onAnyBed(x, z) ? TOP : 1);
+
+let renderer, scene, cam, sun, hemi, skyC, skyG, plants, fruits, partMesh, rainMesh, snowMesh, trailMesh, arrow, ring, ghostRing, bolt, heldMesh, mats;
+const parts = [], drops = [], flakes = [], anims = new Map(), lanternGlows = [], clouds = [], npcs = [], colliders = [], decor = [], nbFarmers = [];
+const shopBoxes = {};
+let playerMeshes = [];
 
 // ---------------------------------------------------------------- setup
 export function init(host) {
   skyC = document.createElement('canvas'); skyC.id = 'sky'; host.appendChild(skyC); skyG = skyC.getContext('2d');
-  renderer = new T.WebGLRenderer({ antialias: true, alpha: true });
+  renderer = new T.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputEncoding = T.sRGBEncoding;
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = T.PCFSoftShadowMap;
   renderer.setClearColor(0x000000, 0);
   renderer.domElement.id = 'gl';
+  W.renderer = renderer;
   host.appendChild(renderer.domElement);
   scene = new T.Scene();
-  cam = new T.OrthographicCamera(-10, 10, 10, -10, 1, 600);
+  scene.fog = new T.Fog(0xc8ecff, 80, 175);
+  cam = new T.PerspectiveCamera(62, 1, 0.5, 240);
   hemi = new T.HemisphereLight(0xffffff, 0x6a8a5a, 0.75); scene.add(hemi);
   sun = new T.DirectionalLight(0xfff2dc, 1.05);
-  sun.position.set(-40, 90, 45); sun.target.position.set(0, 0, -6);
-  sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0012; sun.shadow.normalBias = 0.02;
-  Object.assign(sun.shadow.camera, { left: -75, right: 75, top: 75, bottom: -75, near: 1, far: 260 });
+  sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0012; sun.shadow.normalBias = 0.03;
+  Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 300 });
   scene.add(sun, sun.target);
-  const vmat = new T.MeshLambertMaterial({ vertexColors: true });
-  buildTerrain(vmat);
-  buildStalls(vmat);
-  plants = new Batcher(scene, vmat);
-  fruits = new Batcher(scene, vmat);
-  // effects
-  const basic = new T.MeshBasicMaterial({ vertexColors: true });
-  partMesh = new T.InstancedMesh(M.cubeGeo(), basic, 900); partMesh.setColorAt(0, new T.Color(1, 1, 1)); partMesh.count = 0; partMesh.frustumCulled = false; scene.add(partMesh);
-  rainMesh = new T.InstancedMesh(new T.BoxGeometry(0.12, 1.6, 0.12), new T.MeshBasicMaterial({ color: 0xbfe0ff, transparent: true, opacity: 0.55 }), 700); rainMesh.count = 0; rainMesh.frustumCulled = false; scene.add(rainMesh);
+  mats = { vox: new T.MeshLambertMaterial({ vertexColors: true }), basic: new T.MeshBasicMaterial({ vertexColors: true }) };
+  buildTerrain();
+  buildProps();
+  buildShops();
+  plants = new Batcher(scene, mats.vox);
+  fruits = new Batcher(scene, mats.vox);
+  partMesh = new T.InstancedMesh(M.cubeGeo(), mats.basic, 900); partMesh.setColorAt(0, new T.Color(1, 1, 1)); partMesh.count = 0; partMesh.frustumCulled = false; scene.add(partMesh);
+  rainMesh = new T.InstancedMesh(new T.BoxGeometry(0.18, 2.4, 0.18), new T.MeshBasicMaterial({ color: 0xd8ecff, transparent: true, opacity: 0.6 }), 1200); rainMesh.count = 0; rainMesh.frustumCulled = false; scene.add(rainMesh);
   snowMesh = new T.InstancedMesh(new T.BoxGeometry(0.4, 0.4, 0.4), new T.MeshBasicMaterial({ color: 0xffffff }), 500); snowMesh.count = 0; snowMesh.frustumCulled = false; scene.add(snowMesh);
-  trailMesh = new T.InstancedMesh(new T.BoxGeometry(0.7, 0.3, 0.7), new T.MeshBasicMaterial({ color: 0xfff27a, transparent: true, opacity: 0.9 }), 80); trailMesh.count = 0; trailMesh.frustumCulled = false; scene.add(trailMesh);
-  farmer = [0, 1].map((f) => { const m = new T.Mesh(M.farmerGeo(f), vmat); m.castShadow = true; scene.add(m); return m; });
-  W.farmer = { x: 0, z: BED.rz + 4, tx: 0, tz: BED.rz + 4, dir: Math.PI, walk: 0 };
-  // tutorial arrow + ring
+  trailMesh = new T.InstancedMesh(new T.BoxGeometry(1.3, 0.35, 1.3), new T.MeshBasicMaterial({ color: 0xfff27a, transparent: true, opacity: 0.95 }), 120); trailMesh.count = 0; trailMesh.frustumCulled = false; scene.add(trailMesh);
+  // the player
+  W.player = { x: HOME.x, y: 1, z: HOME.z, dir: Math.PI, walk: 0, moving: 0, act: 0, vx: 0, vz: 0 };
+  playerMeshes = [0, 1, 2].map((f) => { const m = new T.Mesh(M.farmerGeo(f), mats.vox); m.castShadow = true; scene.add(m); return m; });
+  heldMesh = new T.Mesh(M.heldGeo('shovel'), mats.vox); heldMesh.castShadow = true; heldMesh.visible = false; scene.add(heldMesh);
+  // tutorial arrow, ring, planting flash ring, lightning bolt
   const AV = new Vox(() => 0.5);
   AV.box(-1, 4, -1, 1, 8, 1, (x, y) => (y === 8 ? '#fff4a0' : '#ffd23f'), 0);
   for (let k = 0; k < 4; k++) AV.box(-3 + k, 3 - k, -3 + k, 3 - k, 3 - k, 3 - k, k === 0 ? '#ffc21f' : '#ffb01a', 0);
   arrow = new T.Mesh(mesh(AV, { offset: [-0.5, 0, -0.5] }), new T.MeshLambertMaterial({ vertexColors: true, emissive: 0x6a4a00 }));
   arrow.visible = false; scene.add(arrow);
-  ring = new T.Mesh(new T.RingGeometry(2.4, 3.2, 32, 1), new T.MeshBasicMaterial({ color: 0xfff27a, transparent: true, opacity: 0.8, side: T.DoubleSide }));
+  ring = new T.Mesh(new T.RingGeometry(2.4, 3.2, 32, 1), new T.MeshBasicMaterial({ color: 0xfff27a, transparent: true, opacity: 0.8, side: T.DoubleSide, depthWrite: false }));
   ring.rotation.x = -Math.PI / 2; ring.visible = false; scene.add(ring);
-  ghostRing = new T.Mesh(new T.RingGeometry(1, 1.4, 24), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, side: T.DoubleSide }));
+  ghostRing = new T.Mesh(new T.RingGeometry(1, 1.5, 24), new T.MeshBasicMaterial({ color: 0xff6a6a, transparent: true, opacity: 0.9, side: T.DoubleSide, depthWrite: false }));
   ghostRing.rotation.x = -Math.PI / 2; ghostRing.visible = false; scene.add(ghostRing);
-  bolt = new T.Mesh(M.boltGeo(60), new T.MeshBasicMaterial({ vertexColors: true })); bolt.visible = false; scene.add(bolt);
-  for (let k = 0; k < 4; k++) {
+  bolt = new T.Mesh(M.boltGeo(60), mats.basic); bolt.visible = false; scene.add(bolt);
+  for (let k = 0; k < 6; k++) {
     const c = new T.Mesh(M.cloudGeo(k % 3), new T.MeshLambertMaterial({ vertexColors: true, color: 0xffffff }));
-    c.castShadow = true; c.position.set(-80 + k * 45 + Math.random() * 20, 26 + k * 3, -95 - Math.random() * 25); c.userData.v = 1.2 + Math.random();
+    c.position.set(-120 + k * 45 + Math.random() * 20, 46 + (k % 3) * 4, -100 + Math.random() * 180); c.userData.v = 1.5 + Math.random();
     scene.add(c); clouds.push(c);
   }
-  on('reset', () => { anims.clear(); });
+  buildNeighbors();
+  on('reset', () => anims.clear());
+  snapCamera();
 }
 
-function buildTerrain(mat) {
-  const R = rng(12), V = new Vox(R);
-  const PZ0 = -46, PZ1 = -35;
-  for (let x = -84; x <= 84; x++) for (let z = -80; z <= 96; z++) {
-    if (z >= PZ0 && z <= PZ1) { V.set(x, 0, z, (hash(x, z) < 0.15 ? '#d8c09a' : (x + z) % 7 === 0 ? '#c8ae86' : '#ead6b0'), 0.04); continue; }
-    if (inBed(x, z)) { V.set(x, 0, z, '#6a4228', 0.06); V.set(x, 1, z, !inBed(x, z - 1) || !inBed(x - 1, z) ? '#a8744a' : hash(x, z, 3) < 0.15 ? '#7e4e30' : '#8e5c3a', 0.06); continue; }
+// The flat ground is one big square with a texel per voxel; only blocks that stick up are meshed.
+const GROUND = 512;
+const onGround = (x, y) => y <= 0;
+function groundColor(x, z) {
+  const plaza = x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1;
+  const path = Math.abs(x) <= 3 && z > PLAZA.z1 && z < -26;
+  if (plaza || path) {
+    const tile = plaza ? ((Math.floor(x / 3) + Math.floor(z / 3)) & 1) : ((x + z) & 1);
+    return shade(hash(x, z) < 0.08 ? '#c8ae86' : tile ? '#ead6b0' : '#e0c9a0', 1 + (hash(x, z, 11) - 0.5) * 0.06);
+  }
+  if (onAnyBed(x, z)) return hex('#6a4228');
+  const h = hash(x, z, 1);
+  return shade(h < 0.05 ? '#5aae58' : h > 0.97 ? '#8ad87a' : '#78cc6c', 1 + (hash(x, z, 11) - 0.5) * 0.12);
+}
+function buildTerrain() {
+  const V = new Vox(rng(12));
+  for (let x = -132; x <= 132; x++) for (let z = -142; z <= 112; z++) {
+    const plaza = x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1;
+    const path = Math.abs(x) <= 3 && z > PLAZA.z1 && z < -26;
+    if (plaza || path) continue;
+    if (onAnyBed(x, z)) {
+      const edge = !onAnyBed(x, z - 1) || !onAnyBed(x - 1, z) || !onAnyBed(x + 1, z) || !onAnyBed(x, z + 1);
+      V.set(x, 1, z, edge ? '#a8744a' : hash(x, z, 3) < 0.15 ? '#7e4e30' : '#8e5c3a', 0.06);
+      continue;
+    }
     const h = hash(x, z, 1);
-    V.set(x, 0, z, h < 0.05 ? '#5aae58' : h > 0.97 ? '#8ad87a' : '#78cc6c', 0.06);
-    const nb = inBed(x + 1, z) || inBed(x - 1, z) || inBed(x, z + 1) || inBed(x, z - 1);
-    if (nb && hash(x, z, 7) < 0.45) V.set(x, 1, z, hash(x, z, 8) < 0.5 ? '#b8b4c4' : '#9a96a8', 0.05);
-    else if (!nb && h > 0.985) V.set(x, 1, z, ['#ffffff', '#ffd84e', '#ff8ab0', '#a8c8ff'][Math.floor(hash(x, z, 9) * 4)], 0);
-    else if (!nb && h < 0.012) V.set(x, 1, z, '#5cb860', 0.05);
+    const nearBed = onAnyBed(x + 1, z) || onAnyBed(x - 1, z) || onAnyBed(x, z + 1) || onAnyBed(x, z - 1);
+    if (nearBed && hash(x, z, 7) < 0.5) V.set(x, 1, z, hash(x, z, 8) < 0.5 ? '#b8b4c4' : '#9a96a8', 0.05);
+    else if (!nearBed && h > 0.988) V.set(x, 1, z, ['#ffffff', '#ffd84e', '#ff8ab0', '#a8c8ff'][Math.floor(hash(x, z, 9) * 4)], 0);
+    else if (!nearBed && h < 0.01) V.set(x, 1, z, '#5cb860', 0.05);
   }
-  // plaza edge kerbs
-  for (let x = -84; x <= 84; x++) { V.set(x, 0, PZ1 + 1, '#b8a07a', 0.03); }
-  const g = mesh(V);
-  const m = new T.Mesh(g, mat);
-  m.receiveShadow = true;
-  scene.add(m);
-  // trees around the back and sides
-  const TR = rng(5);
-  const spots = [];
-  for (let x = -66; x <= 66; x += 7 + Math.floor(TR() * 4)) spots.push([x, -54 - Math.floor(TR() * 8)]);
-  for (const [x, z] of [[-42, -20], [-46, -6], [-40, 12], [44, -18], [47, 2], [42, 20], [-50, 30], [50, 34], [-36, 44], [38, 48]]) spots.push([x, z]);
-  for (const [x, z] of spots) {
-    const t = new T.Mesh(M.treeGeo(Math.floor(TR() * 5)), mat);
-    t.position.set(x, 1, z); t.castShadow = true; t.receiveShadow = true; scene.add(t);
+  // kerb around the plaza (open where the path comes in)
+  for (let x = PLAZA.x0 - 1; x <= PLAZA.x1 + 1; x++) for (const z of [PLAZA.z0 - 1, PLAZA.z1 + 1]) if (Math.abs(x) > 3 || z === PLAZA.z0 - 1) V.set(x, 1, z, '#c8b48a', 0.03);
+  for (let z = PLAZA.z0; z <= PLAZA.z1; z++) for (const x of [PLAZA.x0 - 1, PLAZA.x1 + 1]) V.set(x, 1, z, '#c8b48a', 0.03);
+  // paint the ground, with a soft contact shadow around everything that sticks up
+  const N = GROUND, H = N / 2, c = document.createElement('canvas');
+  c.width = c.height = N;
+  const g = c.getContext('2d'), img = g.createImageData(N, N), d = img.data, dark = new Float32Array(N * N).fill(1);
+  for (const [x, , z] of V.m.values()) for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    const i = (z + dz + H) * N + (x + dx + H);
+    if (i >= 0 && i < N * N) dark[i] = Math.min(dark[i], dx && dz ? 0.9 : 0.8);
   }
+  for (let pz = 0; pz < N; pz++) for (let px = 0; px < N; px++) {
+    const col = groundColor(px - H, pz - H), k = dark[pz * N + px], i = (pz * N + px) * 4;
+    d[i] = (col >> 16) * k; d[i + 1] = ((col >> 8) & 255) * k; d[i + 2] = (col & 255) * k; d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new T.CanvasTexture(c);
+  tex.encoding = T.sRGBEncoding; tex.magFilter = T.NearestFilter; tex.minFilter = T.LinearMipmapLinearFilter;
+  tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const ground = new T.Mesh(new T.PlaneGeometry(N, N), new T.MeshLambertMaterial({ map: tex }));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(-0.5, 1, -0.5); ground.receiveShadow = true;
+  scene.add(ground);
+  for (const geo of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo, mats.vox); m.receiveShadow = true; scene.add(m); }
 }
 
-function buildStalls(mat) {
-  for (const [kind, x] of [['seeds', -15], ['sell', 15]]) {
-    const z = -41;
-    const s = new T.Mesh(M.stallGeo(kind), mat);
+function buildProps() {
+  const V = new Vox(rng(77)), R = rng(5);
+  const blocked = (x, z) =>
+    (Math.abs(x) < 36 && z > -36 && z < 80) || (Math.abs(x) < 8 && z > -54 && z < 60) ||
+    (x > PLAZA.x0 - 6 && x < PLAZA.x1 + 6 && z > PLAZA.z0 - 4 && z < PLAZA.z1 + 6) ||
+    NEIGHBORS.some((nb) => Math.hypot(x - nb.x, z - nb.z) < 27);
+  for (let gx = -126; gx <= 126; gx += 13) for (let gz = -136; gz <= 106; gz += 13) {
+    const x = Math.round(gx + (R() - 0.5) * 9), z = Math.round(gz + (R() - 0.5) * 9);
+    if (blocked(x, z) || R() < 0.15) continue;
+    M.drawTree(V, x, 1, z, Math.floor(R() * 8));
+    colliders.push({ x, z, r: 1.6 });
+  }
+  // lamps along the path and around the plaza
+  const lamps = [[-7, -30], [PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [-24, 31], [24, 31]];
+  for (const [x, z] of lamps) { M.drawLamp(V, x, 1, z); colliders.push({ x, z, r: 0.8 }); addGlow(x, 10.5, z, 0xffd27a, 16); addLampHead(x, 9.5, z); }
+  // plaza dressing
+  for (const [x, z] of [[-30, -60], [30, -60], [-30, -82], [30, -82]]) { M.drawFlowerbed(V, x, 1, z, 5); colliders.push({ x0: x - 5.5, x1: x + 5.5, z0: z - 1.5, z1: z + 1.5 }); }
+  for (const [x, z] of [[-22, -54], [22, -54]]) { M.drawBench(V, x, 1, z); colliders.push({ x0: x - 2.5, x1: x + 2.5, z0: z - 0.5, z1: z + 1.5 }); }
+  M.drawFlowerbed(V, 0, 1, -86, 8);
+  colliders.push({ x0: -8.5, x1: 8.5, z0: -87.5, z1: -84.5 });
+  // fence posts around the neighbours' plots
+  for (const nb of NEIGHBORS) for (let a = 0; a < Math.PI * 2; a += 0.21) {
+    const r = bedR(a) + 3 / nb.rx;
+    M.drawPost(V, Math.round(nb.x + Math.cos(a) * nb.rx * r), 1, Math.round(nb.z + Math.sin(a) * nb.rz * r), 3);
+  }
+  // signposts
+  V.box(-16, 1, 32, -16, 4, 32, '#8a5a3a', 0.03); V.box(-10, 1, 32, -10, 4, 32, '#8a5a3a', 0.03);
+  for (const nb of NEIGHBORS) { const z = nb.z + nb.rz + 6; V.box(nb.x - 3, 1, z, nb.x - 3, 4, z, '#8a5a3a'); V.box(nb.x + 3, 1, z, nb.x + 3, 4, z, '#8a5a3a'); }
+  for (const geo of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo, mats.vox); m.castShadow = true; m.receiveShadow = true; scene.add(m); }
+  sign('YOUR GARDEN', -12.5, 5.6, 32.6, 8, '#c8904a');
+  for (const nb of NEIGHBORS) sign(nb.name.toUpperCase(), nb.x + 0.5, 5.6, nb.z + nb.rz + 6.6, 8, '#9a7ad0');
+}
+function addLampHead(x, y, z) {
+  const l = new T.Mesh(M.lanternGeo(), mats.basic);
+  l.position.set(x + 0.5, y - 1, z + 0.5); l.scale.set(1.6, 1.2, 1.6); scene.add(l);
+}
+function addGlow(x, y, z, col, s) {
+  const g = new T.Sprite(new T.SpriteMaterial({ map: glowTex(), color: col, transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
+  g.position.set(x + 0.5, y, z + 0.5); g.scale.set(s, s, 1); scene.add(g); lanternGlows.push(g);
+}
+function textTexture(str, bg, w = 512, h = 128) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const tex = new T.CanvasTexture(c); tex.encoding = T.sRGBEncoding;
+  const draw = () => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, h - h / 12, w, h / 12);
+    let size = Math.round(h * 0.6); g.font = `${size}px Bungee, "Arial Black", sans-serif`;
+    while (g.measureText(str).width > w * 0.9 && size > 12) { size -= 2; g.font = `${size}px Bungee, "Arial Black", sans-serif`; }
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillText(str, w / 2 + h / 32, h / 2 + h / 20); g.fillStyle = '#fff'; g.fillText(str, w / 2, h / 2 + h / 64);
+    tex.needsUpdate = true;
+  };
+  draw();
+  if (document.fonts) document.fonts.ready.then(draw);
+  return tex;
+}
+function sign(str, x, y, z, w, bg) {
+  const board = new T.Mesh(new T.BoxGeometry(w, w / 4, 0.6), new T.MeshLambertMaterial({ color: 0x8a5a3a }));
+  board.position.set(x, y, z - 0.35); board.castShadow = true; scene.add(board);
+  const face = new T.Mesh(new T.PlaneGeometry(w - 0.4, w / 4 - 0.4), new T.MeshLambertMaterial({ map: textTexture(str, bg) }));
+  face.position.set(x, y, z - 0.03); scene.add(face);
+}
+function buildShops() {
+  for (const kind of ['seeds', 'sell']) {
+    const { x, z } = SHOPS[kind];
+    const s = new T.Mesh(M.stallGeo(kind), mats.vox);
     s.position.set(x, 1, z); s.castShadow = true; s.receiveShadow = true; scene.add(s);
-    const n = new T.Mesh(M.npcGeo(kind), mat); n.position.set(x, 1, z - 1); n.castShadow = true; scene.add(n); npcs.push(n);
-    // painted sign
-    const c = document.createElement('canvas'); c.width = 256; c.height = 64;
-    const g = c.getContext('2d'); g.fillStyle = M.STALL[kind].col; g.fillRect(0, 0, 256, 64);
-    g.font = '44px Bungee, "Arial Black", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillText(M.STALL[kind].label, 131, 37); g.fillStyle = '#fff'; g.fillText(M.STALL[kind].label, 128, 34);
-    const tex = new T.CanvasTexture(c); tex.encoding = T.sRGBEncoding;
-    const sign = new T.Mesh(new T.PlaneGeometry(9, 2.25), new T.MeshLambertMaterial({ map: tex }));
-    sign.position.set(x, 1 + 16.5, z - 1 + 0.52); scene.add(sign);
-    sign.userData.redraw = () => { g.fillStyle = M.STALL[kind].col; g.fillRect(0, 0, 256, 64); g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillText(M.STALL[kind].label, 131, 37); g.fillStyle = '#fff'; g.fillText(M.STALL[kind].label, 128, 34); tex.needsUpdate = true; };
-    if (document.fonts) document.fonts.ready.then(sign.userData.redraw);
-    const l = new T.Mesh(M.lanternGeo(), new T.MeshBasicMaterial({ vertexColors: true }));
-    l.position.set(x + 8, 1 + 9, z); scene.add(l); lanterns.push(l);
-    const glow = new T.Sprite(new T.SpriteMaterial({ map: glowTex(), color: 0xffc070, transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
-    glow.position.set(x + 8, 1 + 10, z + 0.5); glow.scale.set(14, 14, 1); scene.add(glow); lanternGlows.push(glow);
-    stallBoxes[kind] = new T.Box3(new T.Vector3(x - 10, 0, z - 4), new T.Vector3(x + 10, 20, z + 5));
+    const n = new T.Mesh(M.npcGeo(kind), mats.vox); n.position.set(x, 1, z - 1); n.castShadow = true; scene.add(n); npcs.push(n);
+    const face = new T.Mesh(new T.PlaneGeometry(9, 2.25), new T.MeshLambertMaterial({ map: textTexture(M.STALL[kind].label, M.STALL[kind].col, 256, 64) }));
+    face.position.set(x, 1 + 16.5, z - 1 + 0.52); scene.add(face);
+    const l = new T.Mesh(M.lanternGeo(), mats.basic); l.position.set(x + 8, 1 + 9, z); scene.add(l);
+    addGlow(x + 8, 11, z, 0xffc070, 14);
+    shopBoxes[kind] = new T.Box3(new T.Vector3(x - 10, 0, z - 4), new T.Vector3(x + 10, 20, z + 5));
+    colliders.push({ x0: x - 9.5, x1: x + 9.5, z0: z - 3.5, z1: z + 3 });
   }
 }
 let _glow = null;
@@ -126,81 +228,140 @@ function glowTex() {
   g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
   return (_glow = new T.CanvasTexture(c));
 }
+function buildNeighbors() {
+  const pool = ['carrot', 'strawberry', 'blueberry', 'tomato', 'corn', 'pumpkin', 'watermelon', 'apple', 'tulip', 'coconut', 'mango', 'dragonfruit', 'grape', 'mushroom'];
+  NEIGHBORS.forEach((nb, ni) => {
+    const R = rng(ni * 101 + 7);
+    const placed = [];
+    for (let k = 0; k < 80 && placed.length < 11; k++) {
+      const c = pool[Math.floor(R() * pool.length)], cr = CROP[c];
+      const x = Math.round(nb.x + (R() - 0.5) * nb.rx * 1.6), z = Math.round(nb.z + (R() - 0.5) * nb.rz * 1.6);
+      if (!inNb(nb, x, z, cr.r * 0.6)) continue;
+      if (placed.some((p) => Math.hypot(p.x - x, p.z - z) < (cr.r + CROP[p.c].r) * 0.7)) continue;
+      const fr = cr.multi ? Array.from({ length: cr.n }, () => ({ p: R() < 0.8 ? 1 : 0.6, s: 0.9 + R() * 0.4, m: R() < 0.06 ? ['gold'] : [] })) : [{ p: 1, s: 0.9 + R() * 0.3, m: [] }];
+      placed.push({ id: 10000 + ni * 100 + k, c, x, z, g: cr.grow, v: Math.floor(R() * 3), rot: Math.floor(R() * 4), fr });
+    }
+    decor.push(...placed);
+    const meshes = [0, 1, 2].map((f) => { const m = new T.Mesh(M.farmerGeo(f, nb.pal, 'nb' + ni), mats.vox); m.castShadow = true; scene.add(m); return m; });
+    nbFarmers.push({ nb, x: nb.x, z: nb.z + 4, tx: nb.x, tz: nb.z, dir: 0, walk: 0, wait: 1 + ni, act: 0, meshes });
+  });
+}
 
 // ---------------------------------------------------------------- camera
-const DIR = new T.Vector3(0.24, 0.8, 0.95).normalize();
-let screen = { w: 360, h: 740, top: 70, bottom: 150 };
-export function resize(w, h, padTop, padBottom) {
-  screen = { w, h, top: padTop, bottom: padBottom };
+const cs = { yaw: 0, pitch: 0.72, dist: 52, tx: 0, ty: 0, tz: 0, lead: 10, lift: 3 };
+export const camState = cs;
+let screen = { w: 360, h: 740 };
+export function resize(w, h) {
+  screen = { w, h };
   renderer.setSize(w, h);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   skyC.width = Math.round(w * dpr); skyC.height = Math.round(h * dpr); skyC.style.width = w + 'px'; skyC.style.height = h + 'px';
   skyG.setTransform(dpr, 0, 0, dpr, 0, 0);
-  fitCamera();
-}
-function fitCamera() {
-  const target = new T.Vector3(0, 0, -6);
-  cam.position.copy(target).addScaledVector(DIR, 200);
-  cam.up.set(0, 1, 0); cam.lookAt(target); cam.updateMatrixWorld();
-  const inv = cam.matrixWorldInverse;
-  const pts = [];
-  for (let a = 0; a < Math.PI * 2; a += 0.3) pts.push(new T.Vector3(Math.cos(a) * (BED.rx + 3), TOP, Math.sin(a) * (BED.rz + 3)));
-  for (const x of [-25, 25]) pts.push(new T.Vector3(x, 19, -42));
-  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
-  for (const p of pts) { const v = p.clone().applyMatrix4(inv); x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y); }
-  const availH = screen.h - screen.top - screen.bottom;
-  const u = Math.max((x1 - x0) / screen.w, (y1 - y0) / availH) * 1.04;
-  const cx = (x0 + x1) / 2;
-  view.base = { left: cx - (screen.w / 2) * u, right: cx + (screen.w / 2) * u, top: y1 + screen.top * u, bottom: y1 + screen.top * u - screen.h * u, u };
-  applyView();
-}
-function applyView() {
-  const b = view.base, z = view.zoom;
-  const cx = (b.left + b.right) / 2 + view.px, cy = (b.top + b.bottom) / 2 + view.pz;
-  const hw = (b.right - b.left) / 2 / z, hh = (b.top - b.bottom) / 2 / z;
-  Object.assign(cam, { left: cx - hw, right: cx + hw, top: cy + hh, bottom: cy - hh });
+  skyKey = '';
+  cam.aspect = w / h;
+  cam.fov = w / h < 0.75 ? 64 : 50;
   cam.updateProjectionMatrix();
 }
-export function zoomBy(f, sx, sy) {
-  const before = screenToView(sx, sy);
-  view.zoom = Math.min(2.6, Math.max(1, view.zoom * f));
-  applyView();
-  const after = screenToView(sx, sy);
-  panBy(0, 0, before.x - after.x, before.y - after.y);
+export function rotateCam(dx, dy) { cs.yaw -= dx * 0.0085; cs.pitch = Math.min(1.3, Math.max(0.42, cs.pitch + dy * 0.006)); }
+export function zoomCam(f) { cs.dist = Math.min(80, Math.max(16, cs.dist / f)); }
+export function snapCamera(yaw = cs.yaw) {
+  const p = W.player;
+  cs.yaw = yaw; cs.tx = p.x; cs.ty = p.y + cs.lift; cs.tz = p.z;
+  placeCamera();
 }
-export function panPixels(dx, dy) { const u = view.base.u / view.zoom; panBy(0, 0, -dx * u, dy * u); }
-function panBy(_a, _b, vx, vy) {
-  view.px += vx; view.pz += vy;
-  const lim = ((view.base.right - view.base.left) / 2) * (1 - 1 / view.zoom);
-  const limy = ((view.base.top - view.base.bottom) / 2) * (1 - 1 / view.zoom);
-  view.px = Math.max(-lim, Math.min(lim, view.px)); view.pz = Math.max(-limy, Math.min(limy, view.pz));
-  applyView();
+// the camera looks a little ahead of the farmer so more of the garden is in view
+function placeCamera() {
+  const cp = Math.cos(cs.pitch), sp = Math.sin(cs.pitch), sy = Math.sin(cs.yaw), cy = Math.cos(cs.yaw);
+  const lx = cs.tx - sy * cs.lead, lz = cs.tz - cy * cs.lead;
+  cam.position.set(lx + sy * cp * cs.dist, cs.ty + sp * cs.dist, lz + cy * cp * cs.dist);
+  cam.lookAt(lx, cs.ty, lz);
+  cam.updateMatrixWorld();
 }
-function screenToView(sx, sy) { return { x: cam.left + (sx / screen.w) * (cam.right - cam.left), y: cam.top - (sy / screen.h) * (cam.top - cam.bottom) }; }
-export const zoomLevel = () => view.zoom;
+export const camYaw = () => cs.yaw;
+
+// ---------------------------------------------------------------- player
+const angLerp = (a, b, t) => { let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI; if (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
+function collide(o, r) {
+  for (const c of colliders) {
+    if (c.r !== undefined) {
+      const dx = o.x - (c.x + 0.5), dz = o.z - (c.z + 0.5), d = Math.hypot(dx, dz), m = r + c.r;
+      if (d < m && d > 0.0001) { o.x += (dx / d) * (m - d); o.z += (dz / d) * (m - d); }
+    } else {
+      const cx = Math.max(c.x0, Math.min(c.x1, o.x)), cz = Math.max(c.z0, Math.min(c.z1, o.z));
+      const dx = o.x - cx, dz = o.z - cz, d = Math.hypot(dx, dz);
+      if (d < r) {
+        if (d > 0.0001) { o.x += (dx / d) * (r - d); o.z += (dz / d) * (r - d); }
+        else {
+          const opts = [[c.x0 - r - o.x, 0], [c.x1 + r - o.x, 0], [0, c.z0 - r - o.z], [0, c.z1 + r - o.z]].sort((a, b) => Math.abs(a[0] + a[1]) - Math.abs(b[0] + b[1]));
+          o.x += opts[0][0]; o.z += opts[0][1];
+        }
+      }
+    }
+  }
+  o.x = Math.max(BOUNDS.x0, Math.min(BOUNDS.x1, o.x)); o.z = Math.max(BOUNDS.z0, Math.min(BOUNDS.z1, o.z));
+}
+function movePlayer(dt, ix, iy) {
+  const p = W.player;
+  const fx = -Math.sin(cs.yaw), fz = -Math.cos(cs.yaw), rx = Math.cos(cs.yaw), rz = -Math.sin(cs.yaw);
+  const mx = rx * ix + fx * iy, mz = rz * ix + fz * iy, ml = Math.hypot(mx, mz), m = Math.min(1, ml);
+  const speed = 17;
+  const tvx = m > 0.08 ? (mx / ml) * m * speed : 0, tvz = m > 0.08 ? (mz / ml) * m * speed : 0;
+  const k = 1 - Math.exp(-dt * 14);
+  p.vx += (tvx - p.vx) * k; p.vz += (tvz - p.vz) * k;
+  const v = Math.hypot(p.vx, p.vz);
+  p.x += p.vx * dt; p.z += p.vz * dt;
+  collide(p, 1.1);
+  if (v > 0.8) { p.dir = angLerp(p.dir, Math.atan2(p.vx, p.vz), 1 - Math.exp(-dt * 16)); p.walk += dt * v * 0.75; p.moving = v; } else { p.moving = 0; p.walk = 0; }
+  p.y += (groundY(p.x, p.z) - p.y) * (1 - Math.exp(-dt * 18));
+  p.act = Math.max(0, p.act - dt);
+}
+export function teleport(spot, dir = Math.PI) {
+  const p = W.player;
+  burst(p.x, p.y + 4, p.z, ['#ffffff', '#bfe4ff', '#fff27a'], 20, { speed: 8, up: 10, life: 0.5, size: 0.5 });
+  p.x = spot.x; p.z = spot.z; p.y = groundY(p.x, p.z); p.vx = p.vz = 0; p.dir = dir;
+  snapCamera(0);
+  burst(p.x, p.y + 4, p.z, ['#ffffff', '#bfe4ff', '#fff27a'], 24, { speed: 9, up: 12, life: 0.6, size: 0.5 });
+}
+export function faceTo(x, z) { const p = W.player; p.dir = Math.atan2(x - p.x, z - p.z); p.act = 0.25; }
+export const distTo = (x, z) => Math.hypot(W.player.x - x, W.player.z - z);
+export function nearShop(r = 12) {
+  for (const k in SHOPS) if (Math.hypot(W.player.x - SHOPS[k].x, W.player.z - (SHOPS[k].z + 3)) < r) return k;
+  return null;
+}
 
 // ---------------------------------------------------------------- picking
-const ray = new T.Raycaster(), ndc = new T.Vector2(), plane = new T.Plane(new T.Vector3(0, 1, 0), -TOP), hitP = new T.Vector3();
+const ray = new T.Raycaster(), ndc = new T.Vector2(), hitP = new T.Vector3(), box = new T.Box3(), bmin = new T.Vector3(), bmax = new T.Vector3(), plane = new T.Plane(new T.Vector3(0, 1, 0), -TOP);
 function setRay(sx, sy) { ndc.set((sx / screen.w) * 2 - 1, -(sy / screen.h) * 2 + 1); ray.setFromCamera(ndc, cam); }
-export function screenToGround(sx, sy) { setRay(sx, sy); return ray.ray.intersectPlane(plane, hitP) ? { x: hitP.x, z: hitP.z } : null; }
-export function pickStall(sx, sy) { setRay(sx, sy); for (const k in stallBoxes) if (ray.ray.intersectsBox(stallBoxes[k])) return k; return null; }
-const _v = new T.Vector3();
-export function project(x, y, z) { _v.set(x, y, z).project(cam); return { x: ((_v.x + 1) / 2) * screen.w, y: ((1 - _v.y) / 2) * screen.h }; }
+export function groundPoint(sx, sy) { setRay(sx, sy); return ray.ray.intersectPlane(plane, hitP) ? { x: hitP.x, z: hitP.z } : null; }
+export const growth = (pl) => (CROP[pl.c].multi ? pl.g / CROP[pl.c].grow : pl.fr[0].p);
 export function pickPlant(sx, sy) {
+  setRay(sx, sy);
   let best = null, bd = 1e9;
-  const u = view.base.u / view.zoom;
   for (const pl of G.plants) {
-    const st = M.stageOf(growth(pl)), h = M.plantHeight(pl.c, st);
-    const c = project(pl.x, TOP + h * 0.45, pl.z);
-    const r = Math.max(12, (Math.max(h * 0.55, CROP[pl.c].r) / u) * 0.9);
-    const d = Math.hypot(c.x - sx, c.y - sy);
-    if (d < r && d / r < bd) { bd = d / r; best = pl; }
+    const st = M.stageOf(Math.min(1, growth(pl))), h = M.plantHeight(pl.c, st), r = Math.max(1.4, Math.min(CROP[pl.c].r, h * 0.6));
+    box.set(bmin.set(pl.x - r, TOP, pl.z - r), bmax.set(pl.x + r, TOP + h + 0.5, pl.z + r));
+    const hit = ray.ray.intersectBox(box, hitP);
+    if (hit) { const d = hit.distanceTo(cam.position); if (d < bd) { bd = d; best = pl; } }
   }
   return best;
 }
-export const stallScreen = (k) => project(k === 'seeds' ? -15 : 15, 14, -40);
-export const plantScreen = (pl, k = 0.5) => project(pl.x, TOP + M.plantHeight(pl.c, M.stageOf(growth(pl))) * k, pl.z);
-export const growth = (pl) => (CROP[pl.c].multi ? pl.g / CROP[pl.c].grow : pl.fr[0].p);
+const fp = new T.Vector3();
+export function pickFruit(sx, sy) {
+  setRay(sx, sy);
+  let best = null, bd = 1e9;
+  for (const pl of G.plants) for (let k = 0; k < (pl._fw || []).length; k++) {
+    const f = pl._fw[k];
+    if (!f || !f.ripe) continue;
+    fp.set(f.x, f.y + (f.sit ? 1 : -1), f.z);
+    const d2 = ray.ray.distanceSqToPoint(fp);
+    if (d2 < 3.2 && d2 < bd) { bd = d2; best = { pl, k }; }
+  }
+  return best;
+}
+export function pickShop(sx, sy) { setRay(sx, sy); for (const k in shopBoxes) if (ray.ray.intersectsBox(shopBoxes[k])) return k; return null; }
+const _v = new T.Vector3();
+export function project(x, y, z) { _v.set(x, y, z).project(cam); return { x: ((_v.x + 1) / 2) * screen.w, y: ((1 - _v.y) / 2) * screen.h, behind: _v.z > 1 }; }
+export const plantScreen = (pl, k = 0.5) => project(pl.x, TOP + M.plantHeight(pl.c, M.stageOf(Math.min(1, growth(pl)))) * k, pl.z);
 
 // ---------------------------------------------------------------- effects API
 const PC = new T.Color();
@@ -211,50 +372,57 @@ export function burst(x, y, z, cols, n = 10, o = {}) {
   }
 }
 export function sparkle(x, y, z, col = '#ffffff', n = 1) { for (let k = 0; k < n; k++) parts.push({ x: x + (Math.random() - 0.5), y, z: z + (Math.random() - 0.5), vx: 0, vy: 3, vz: 0, g: 0, t: 0, life: 0.6, s: 0.35, col, spin: 1 }); }
-export function pop(pl, kind = 'plant') { anims.set(pl.id, { t: 0, kind }); }
-export function walkTo(x, z) { W.farmer.tx = Math.max(-60, Math.min(60, x)); W.farmer.tz = Math.max(-34, Math.min(60, z)); }
+// a seed tossed from the farmer's hand to the soil; returns the flight time
+export function toss(x, z, col = '#c8a86a') {
+  const p = W.player, sx = p.x + Math.sin(p.dir) * 1.5, sz = p.z + Math.cos(p.dir) * 1.5, sy = p.y + 4;
+  const d = Math.hypot(x - sx, z - sz), T1 = Math.min(0.5, 0.2 + d * 0.012), g = 30;
+  parts.push({ x: sx, y: sy, z: sz, vx: (x - sx) / T1, vy: (TOP + 0.3 - sy) / T1 + (g * T1) / 2, vz: (z - sz) / T1, g, t: 0, life: T1, s: 0.6, col, seed: 1 });
+  return T1;
+}
+export function pop(pl, kind = 'plant', delay = 0) { anims.set(pl.id, { t: -delay, kind }); }
 export function lightning(x, z) {
   bolt.position.set(x, TOP + 60, z); bolt.visible = true; bolt.userData.t = 0.22;
   env.flash = 1;
   burst(x, TOP + 6, z, ['#fff36b', '#ffffff', '#9ad8ff'], 22, { speed: 14, up: 14 });
 }
-export function setGhost(x, z, ok) {
-  if (x == null) { ghostRing.visible = false; return; }
-  ghostRing.visible = true; ghostRing.position.set(x, TOP + 0.08, z);
-  ghostRing.material.color.set(ok ? 0xffffff : 0xff6a6a);
-}
+export function flashRing(x, z) { ghostRing.visible = true; ghostRing.position.set(x, TOP + 0.08, z); ghostRing.userData.t = 0.5; }
 let guide = null;
 export function setGuide(g) { guide = g; }
 
-// ---------------------------------------------------------------- per-frame
+// ---------------------------------------------------------------- sky and light
 const KEYS = [[0, '#f4b0a0', 0.55, '#a8b8e8', 0.5], [0.07, '#fff2dc', 1.05, '#e8f4ff', 0.75], [0.6, '#fff0d8', 1.0, '#eaf2ff', 0.72], [0.66, '#ffb070', 0.8, '#ffd0b0', 0.6], [0.73, '#7080d8', 0.32, '#5060a0', 0.38], [0.93, '#7080d8', 0.32, '#5060a0', 0.38], [0.98, '#ffb8a0', 0.55, '#a890c0', 0.5], [1, '#f4b0a0', 0.55, '#a8b8e8', 0.5]];
-const SKY = [[0, '#6878c8', '#f4a890'], [0.07, '#4aa8f4', '#c8ecff'], [0.58, '#4aa0f4', '#c4e8ff'], [0.65, '#5a60b8', '#ff9a78'], [0.73, '#0e1236', '#2a3070'], [0.93, '#0e1236', '#2a3070'], [0.975, '#3a3a80', '#c08aa0'], [1, '#6878c8', '#f4a890']];
-const ca = new T.Color(), cb = new T.Color();
+const SKY = [[0, '#6878c8', '#f4c0a8'], [0.07, '#4aa8f4', '#d4f0ff'], [0.58, '#4aa0f4', '#cdeeff'], [0.65, '#5a60b8', '#ffb08a'], [0.73, '#0e1236', '#2a3070'], [0.93, '#0e1236', '#2a3070'], [0.975, '#3a3a80', '#c08aa0'], [1, '#6878c8', '#f4c0a8']];
+const ca = new T.Color(), cb = new T.Color(), cTop = new T.Color(), cBot = new T.Color();
 function key(keys, d) {
   for (let k = 0; k < keys.length - 1; k++) if (d >= keys[k][0] && d <= keys[k + 1][0]) return [keys[k], keys[k + 1], (d - keys[k][0]) / (keys[k + 1][0] - keys[k][0])];
   return [keys[0], keys[0], 0];
 }
 const lerpCol = (a, b, t, out) => out.set(a).lerp(cb.set(b), t);
 function nightAmount(d) { if (d < 0.6) return 0; if (d < 0.74) return (d - 0.6) / 0.14; if (d < 0.93) return 1; return Math.max(0, 1 - (d - 0.93) / 0.07); }
-
-function drawSky(d) {
-  const g = skyG, w = screen.w, h = screen.h;
+let skyKey = '', skyT = 0;
+function drawSky(d, dt) {
   const [a, b, t] = key(SKY, d);
-  let top = lerpCol(a[1], b[1], t, new T.Color()), bot = lerpCol(a[2], b[2], t, new T.Color());
+  lerpCol(a[1], b[1], t, cTop); lerpCol(a[2], b[2], t, cBot);
   const gray = env.rain * 0.7, sn = env.snow * 0.5;
-  top.lerp(ca.set(env.storm > 0.3 ? '#3a4058' : '#7a8aa8'), gray).lerp(ca.set('#a8b8d0'), sn);
-  bot.lerp(ca.set(env.storm > 0.3 ? '#6a7088' : '#b8c4d4'), gray).lerp(ca.set('#e0e8f4'), sn);
-  if (bloodMoon()) { top.lerp(ca.set('#3a0a1a'), env.night * 0.7); bot.lerp(ca.set('#a02a3a'), env.night * 0.6); }
-  const gr = g.createLinearGradient(0, 0, 0, h * 0.45);
-  gr.addColorStop(0, '#' + top.getHexString()); gr.addColorStop(1, '#' + bot.getHexString());
+  cTop.lerp(ca.set(env.storm > 0.3 ? '#3a4058' : '#7a8aa8'), gray).lerp(ca.set('#a8b8d0'), sn);
+  cBot.lerp(ca.set(env.storm > 0.3 ? '#6a7088' : '#b8c4d4'), gray).lerp(ca.set('#e0e8f4'), sn);
+  if (bloodMoon()) { cTop.lerp(ca.set('#3a0a1a'), env.night * 0.7); cBot.lerp(ca.set('#a02a3a'), env.night * 0.6); }
+  scene.fog.color.copy(cBot).convertSRGBToLinear();
+  skyT += dt;
+  const k = cTop.getHexString() + cBot.getHexString() + Math.round(d * 400) + (env.flash > 0 ? env.flash.toFixed(2) : '');
+  if (k === skyKey && !(env.night > 0.05 && skyT > 0.12)) return;
+  skyKey = k; skyT = 0;
+  const g = skyG, w = screen.w, h = screen.h;
+  const gr = g.createLinearGradient(0, 0, 0, h * 0.5);
+  gr.addColorStop(0, '#' + cTop.getHexString()); gr.addColorStop(1, '#' + cBot.getHexString());
   g.fillStyle = gr; g.fillRect(0, 0, w, h);
-  if (env.night > 0.05) for (let k = 0; k < 60; k++) {
-    if (hash(k, 4) > env.night || Math.sin(W.t * (1 + hash(k, 3) * 3) + k) < 0.1) continue;
-    g.fillStyle = hash(k, 5) < 0.3 ? '#ffe8b0' : '#ffffff';
-    const s = hash(k, 6) < 0.15 ? 3 : 2;
-    g.fillRect(Math.floor(hash(k, 1) * w), Math.floor(hash(k, 2) * h * 0.3), s, s);
+  if (env.night > 0.05) for (let s = 0; s < 70; s++) {
+    if (hash(s, 4) > env.night || Math.sin(W.t * (1 + hash(s, 3) * 3) + s) < 0.1) continue;
+    g.fillStyle = hash(s, 5) < 0.3 ? '#ffe8b0' : '#ffffff';
+    const z = hash(s, 6) < 0.15 ? 3 : 2;
+    g.fillRect(Math.floor(hash(s, 1) * w), Math.floor(hash(s, 2) * h * 0.35), z, z);
   }
-  const arc = (u) => ({ x: w * 0.12 + u * w * 0.76, y: h * 0.25 - Math.sin(u * Math.PI) * h * 0.18 });
+  const arc = (u) => ({ x: w * 0.12 + u * w * 0.76, y: h * 0.2 - Math.sin(u * Math.PI) * h * 0.13 });
   const body = (u, c, r, glowC) => {
     const p = arc(u);
     const gg = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 4); gg.addColorStop(0, glowC); gg.addColorStop(1, 'rgba(255,255,255,0)');
@@ -263,11 +431,12 @@ function drawSky(d) {
     g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(Math.round(p.x - r), Math.round(p.y - r), r * 2, Math.round(r * 0.6));
     g.globalAlpha = 1;
   };
-  if (d < 0.7) body(Math.min(1, (d + 0.02) / 0.72), '#ffd84a', 13, 'rgba(255,240,180,0.55)');
-  if (d > 0.66 || d < 0.02) body(d > 0.66 ? (d - 0.66) / 0.34 : 1, bloodMoon() ? '#ff4a5a' : '#f2f0dc', 10, bloodMoon() ? 'rgba(255,60,80,0.4)' : 'rgba(200,210,255,0.4)');
+  if (d < 0.7) body(Math.min(1, (d + 0.02) / 0.72), '#ffd84a', 14, 'rgba(255,240,180,0.55)');
+  if (d > 0.66 || d < 0.02) body(d > 0.66 ? (d - 0.66) / 0.34 : 1, bloodMoon() ? '#ff4a5a' : '#f2f0dc', 11, bloodMoon() ? 'rgba(255,60,80,0.4)' : 'rgba(200,210,255,0.4)');
   if (env.flash > 0) { g.fillStyle = `rgba(255,255,255,${env.flash * 0.7})`; g.fillRect(0, 0, w, h); }
 }
 
+// ---------------------------------------------------------------- per frame
 const m4 = new T.Matrix4(), mR = new T.Matrix4(), mS = new T.Matrix4(), mT = new T.Matrix4(), q = new T.Quaternion(), e = new T.Euler(), v3 = new T.Vector3(), s3 = new T.Vector3(), col = new T.Color();
 const TINT = { wet: [0.78, 0.9, 1.25], chilled: [0.95, 1.05, 1.3], moonlit: [0.85, 0.75, 1.35], bloodlit: [1.35, 0.5, 0.55], shocked: [1.35, 1.35, 0.7] };
 function fruitKind(crop, f) {
@@ -277,58 +446,28 @@ function fruitKind(crop, f) {
   if (CROP[crop].multi && f.p < 0.25) return 'bud';
   return f.p < 0.75 ? 'u' : 'r';
 }
-export function fruitWorld(pl, k) { return pl._fw ? pl._fw[k] : null; }
-
-export function update(dt) {
-  W.t += dt;
-  const t = W.t, d = dayFrac(), wt = G.weather.type;
-  const ease = 1 - Math.exp(-dt * 0.8);
-  env.rain += ((wt === 'rain' || wt === 'storm' ? 1 : 0) - env.rain) * ease;
-  env.storm += ((wt === 'storm' ? 1 : 0) - env.storm) * ease;
-  env.snow += ((wt === 'snow' ? 1 : 0) - env.snow) * ease;
-  env.night = nightAmount(d);
-  env.wind = 1 + env.rain * 0.8 + env.storm * 1.4;
-  env.flash = Math.max(0, env.flash - dt * 3);
-  // lights
-  const [a, b, tt] = key(KEYS, d);
-  lerpCol(a[1], b[1], tt, sun.color); sun.intensity = (a[2] + (b[2] - a[2]) * tt) * (1 - env.rain * 0.45 - env.storm * 0.25) + env.flash * 2;
-  lerpCol(a[3], b[3], tt, hemi.color); hemi.intensity = (a[4] + (b[4] - a[4]) * tt) * (1 - env.rain * 0.15) + env.flash;
-  if (bloodMoon()) { sun.color.lerp(ca.set('#ff5060'), env.night * 0.6); hemi.color.lerp(ca.set('#a04050'), env.night * 0.5); }
-  hemi.groundColor.set(env.night > 0.5 ? '#202840' : '#6a8a5a');
-  drawSky(d);
-  for (const c of clouds) {
-    c.position.x += c.userData.v * dt * (1 + env.rain * 1.5);
-    if (c.position.x > 100) { c.position.x = -100; c.position.z = -95 - Math.random() * 25; }
-    c.material.color.set(env.rain > 0.4 ? 0x8a8ea8 : 0xffffff);
-  }
-  lanternGlows.forEach((gl) => { gl.material.opacity = Math.max(env.night, env.storm * 0.5) * (0.8 + Math.sin(t * 3) * 0.05); gl.visible = gl.material.opacity > 0.02; });
-  npcs.forEach((n, k) => { n.position.y = 1 + (Math.sin(t * 2.4 + k) > 0.6 ? 0.25 : 0); n.rotation.y = Math.sin(t * 0.7 + k * 2) * 0.35; });
-  // farmer
-  const f = W.farmer, dx = f.tx - f.x, dz = f.tz - f.z, dd = Math.hypot(dx, dz);
-  if (dd > 0.5) { const sp = Math.min(dd, 24 * dt); f.x += (dx / dd) * sp; f.z += (dz / dd) * sp; f.dir = Math.atan2(dx, dz); f.walk += dt * 10; } else f.walk = 0;
-  const fy = (f.x * f.x) / (BED.rx * BED.rx) + (f.z * f.z) / (BED.rz * BED.rz) < 1 ? TOP : 1;
-  farmer.forEach((m, k) => {
-    m.visible = f.walk ? Math.floor(f.walk / Math.PI) % 2 === k : k === 0;
-    m.position.set(f.x, fy + (f.walk ? Math.abs(Math.sin(f.walk)) * 0.5 : 0), f.z);
-    m.rotation.y = f.dir;
-  });
-  // plants & fruit
-  plants.begin(); fruits.begin();
-  for (const pl of G.plants) {
+function drawPlants(list, live, dt, t) {
+  for (const pl of list) {
     const c = CROP[pl.c], gfrac = Math.min(1, growth(pl)), st = M.stageOf(gfrac);
-    const an = anims.get(pl.id);
-    let sc = 1;
-    if (an) { an.t += dt; const u = an.t / 0.35; if (u >= 1) anims.delete(pl.id); else sc = an.kind === 'plant' ? 0.4 + 0.6 * Math.min(1, u * 1.6) + Math.sin(u * Math.PI) * 0.18 : 1 - Math.sin(u * Math.PI) * 0.15; }
+    const an = live ? anims.get(pl.id) : null;
+    let sc = 1, sy = 1;
+    if (an) {
+      an.t += dt;
+      const u = an.t / 0.35;
+      if (an.t < 0) sc = sy = 0.001;
+      else if (u >= 1) anims.delete(pl.id);
+      else if (an.kind === 'plant') { sc = 0.4 + 0.6 * Math.min(1, u * 1.6) + Math.sin(u * Math.PI) * 0.18; sy = sc; }
+      else { sc = 1 + Math.sin(u * Math.PI) * 0.12; sy = 1 - Math.sin(u * Math.PI) * 0.18; }
+    }
     const amp = (st >= 2 ? 0.035 : 0.015) * env.wind * (pl.c === 'mushroom' ? 0.3 : 1);
     e.set(Math.sin(t * 1.3 + pl.id) * amp * 0.6, pl.rot * Math.PI / 2, Math.sin(t * 1.7 + pl.id * 1.3) * amp);
     q.setFromEuler(e);
-    m4.compose(v3.set(pl.x, TOP, pl.z), q, s3.set(sc, an && an.kind !== 'plant' ? 2 - sc : sc, sc));
+    m4.compose(v3.set(pl.x, TOP, pl.z), q, s3.set(sc, sy, sc));
     plants.add(`p|${pl.c}|${st}|${pl.v}`, () => M.plantGeo(pl.c, st, pl.v), m4);
     const A = M.ANCHORS[pl.c], ks = c.multi ? 1 : M.STAGE_S[st];
-    pl._fw = pl._fw || [];
+    if (live) pl._fw = pl._fw || [];
     pl.fr.forEach((fr, k) => {
-      if (!fr) { pl._fw[k] = null; return; }
-      if (!c.multi && fr.p < 0.4) { pl._fw[k] = null; return; }
+      if (!fr || (!c.multi && fr.p < 0.4)) { if (live) pl._fw[k] = null; return; }
       const kind = fruitKind(pl.c, fr);
       const pt = A.pts[k % A.pts.length];
       const grow = c.multi ? (fr.p < 0.25 ? 1 : 0.45 + 0.55 * Math.min(1, fr.p)) : 0.4 + 0.6 * Math.min(1, fr.p);
@@ -340,38 +479,123 @@ export function update(dt) {
       if (fr.m.includes('rainbow')) tint = col.setHSL((t * 0.4 + k * 0.17 + pl.id * 0.1) % 1, 0.85, 0.62).multiplyScalar(1.35);
       else for (const mm of ['shocked', 'bloodlit', 'moonlit', 'chilled', 'wet']) if (fr.m.includes(mm) && kind !== 'gold' && kind !== 'frozen') { const tc = TINT[mm]; tint = col.setRGB(tc[0], tc[1], tc[2]); if (mm === 'shocked' && Math.sin(t * 20 + k) > 0.6) tint.multiplyScalar(1.4); break; }
       fruits.add(`f|${pl.c}|${kind}`, () => M.fruitGeo(pl.c, kind), mR, tint);
+      if (!live) return;
       v3.setFromMatrixPosition(mR);
-      pl._fw[k] = { x: v3.x, y: v3.y, z: v3.z, ripe: fr.p >= 1 };
+      pl._fw[k] = { x: v3.x, y: v3.y, z: v3.z, ripe: fr.p >= 1, sit: !!A.sit, s: size };
       if (fr.p >= 1 && Math.random() < dt * (fr.m.length ? 2.5 : 0.35)) sparkle(v3.x, v3.y + (A.sit ? 2 : -0.5), v3.z, fr.m.includes('gold') ? '#ffe680' : fr.m.length ? '#e0f0ff' : '#ffffff');
     });
   }
+}
+function drawFarmer(meshes, o, held) {
+  const step = Math.floor(o.walk * 2) % 4;
+  const frame = o.walk ? (step === 1 ? 1 : step === 3 ? 2 : 0) : 0;
+  const bob = o.walk ? Math.abs(Math.sin(o.walk * Math.PI)) * 0.35 : 0;
+  const crouch = o.act ? Math.sin((o.act / 0.25) * Math.PI) * 0.16 : 0;
+  meshes.forEach((m, k) => {
+    m.visible = k === frame;
+    m.position.set(o.x, (o.y ?? 1) + bob, o.z);
+    m.rotation.y = o.dir;
+    m.scale.set(M.FARMER_S, M.FARMER_S * (1 - crouch), M.FARMER_S);
+  });
+  if (held !== undefined) {
+    heldMesh.visible = !!held;
+    if (held) {
+      if (heldMesh.userData.k !== held) { heldMesh.geometry = M.heldGeo(held); heldMesh.userData.k = held; }
+      const ox = -2.3, oz = 0.8;
+      heldMesh.position.set(o.x + Math.cos(o.dir) * ox + Math.sin(o.dir) * oz, (o.y ?? 1) + bob + 2 - crouch * 4, o.z - Math.sin(o.dir) * ox + Math.cos(o.dir) * oz);
+      heldMesh.rotation.y = o.dir;
+      heldMesh.scale.setScalar(0.55);
+    }
+  }
+}
+const SEEDCOL = { carrot: '#ff8a2a', strawberry: '#f03a4e', blueberry: '#4a5ae0', tulip: '#ff8a3a', tomato: '#f04a32', corn: '#ffd84e', watermelon: '#6ac85a', pumpkin: '#ff9a2a', apple: '#e8383e', coconut: '#6e4428', dragonfruit: '#e8408f', mango: '#ffb43a', grape: '#8a4ad0', mushroom: '#e0383a', beanstalk: '#7ae05a' };
+export const seedColor = (c) => SEEDCOL[c] || '#c8a86a';
+
+export function update(dt, input = { x: 0, y: 0 }) {
+  W.t += dt;
+  const t = W.t, d = dayFrac(), wt = G.weather.type;
+  const ease = 1 - Math.exp(-dt * 0.8);
+  env.rain += ((wt === 'rain' || wt === 'storm' ? 1 : 0) - env.rain) * ease;
+  env.storm += ((wt === 'storm' ? 1 : 0) - env.storm) * ease;
+  env.snow += ((wt === 'snow' ? 1 : 0) - env.snow) * ease;
+  env.night = nightAmount(d);
+  env.wind = 1 + env.rain * 0.8 + env.storm * 1.4;
+  env.flash = Math.max(0, env.flash - dt * 3);
+  // player and camera
+  movePlayer(dt, input.x, input.y);
+  const p = W.player;
+  const kf = 1 - Math.exp(-dt * 9);
+  cs.tx += (p.x - cs.tx) * kf; cs.ty += (p.y + cs.lift - cs.ty) * kf; cs.tz += (p.z - cs.tz) * kf;
+  placeCamera();
+  sun.target.position.set(cs.tx, 0, cs.tz);
+  sun.position.set(cs.tx - 40, 90, cs.tz + 45);
+  // lights and sky
+  const [a, b, tt] = key(KEYS, d);
+  lerpCol(a[1], b[1], tt, sun.color); sun.intensity = (a[2] + (b[2] - a[2]) * tt) * (1 - env.rain * 0.45 - env.storm * 0.25) + env.flash * 2;
+  lerpCol(a[3], b[3], tt, hemi.color); hemi.intensity = (a[4] + (b[4] - a[4]) * tt) * (1 - env.rain * 0.15) + env.flash;
+  if (bloodMoon()) { sun.color.lerp(ca.set('#ff5060'), env.night * 0.6); hemi.color.lerp(ca.set('#a04050'), env.night * 0.5); }
+  hemi.groundColor.set(env.night > 0.5 ? '#202840' : '#6a8a5a');
+  drawSky(d, dt);
+  for (const c of clouds) {
+    c.position.x += c.userData.v * dt * (1 + env.rain * 1.5);
+    if (c.position.x > 150) { c.position.x = -150; c.position.z = -100 + Math.random() * 180; }
+    c.material.color.set(env.rain > 0.4 ? 0x8a8ea8 : 0xffffff);
+  }
+  const glowOn = Math.max(env.night, env.storm * 0.5);
+  lanternGlows.forEach((gl) => { gl.material.opacity = glowOn * (0.8 + Math.sin(t * 3) * 0.05); gl.visible = gl.material.opacity > 0.02; });
+  npcs.forEach((n, k) => {
+    n.position.y = 1 + (Math.sin(t * 2.4 + k) > 0.6 ? 0.25 : 0);
+    const dx = p.x - n.position.x, dz = p.z - n.position.z;
+    n.rotation.y = Math.hypot(dx, dz) < 30 ? Math.atan2(dx, dz) : Math.sin(t * 0.7 + k * 2) * 0.35;
+  });
+  // neighbours wander their plots
+  for (const f of nbFarmers) {
+    if (f.wait > 0) {
+      f.wait -= dt; f.walk = 0;
+      if (f.wait <= 0) { const a2 = Math.random() * Math.PI * 2, r = Math.random() * 0.8; f.tx = f.nb.x + Math.cos(a2) * f.nb.rx * r; f.tz = f.nb.z + Math.sin(a2) * f.nb.rz * r; }
+    } else {
+      const dx = f.tx - f.x, dz = f.tz - f.z, dd = Math.hypot(dx, dz);
+      if (dd < 0.6) { f.wait = 1.5 + Math.random() * 4; f.act = 0.25; }
+      else { const s = Math.min(dd, 7 * dt); f.x += (dx / dd) * s; f.z += (dz / dd) * s; f.dir = angLerp(f.dir, Math.atan2(dx, dz), 0.2); f.walk += dt * 3; }
+    }
+    f.act = Math.max(0, f.act - dt);
+    f.y = groundY(f.x, f.z);
+    drawFarmer(f.meshes, f);
+  }
+  const held = G.sel === 'shovel' ? 'shovel' : G.sel && G.sel.startsWith('seed:') ? seedColor(G.sel.slice(5)) : null;
+  drawFarmer(playerMeshes, p, held);
+  // plants and fruit
+  plants.begin(); fruits.begin();
+  drawPlants(G.plants, true, dt, t);
+  drawPlants(decor, false, dt, t);
   plants.end(); fruits.end();
   // particles
-  if (env.night > 0.4 && Math.random() < dt * 4) parts.push({ x: (Math.random() - 0.5) * 90, y: 3 + Math.random() * 6, z: (Math.random() - 0.5) * 80, vx: (Math.random() - 0.5) * 2, vy: 0.4, vz: (Math.random() - 0.5) * 2, g: 0, t: 0, life: 3, s: 0.3, col: '#e8ff7a', blink: true });
+  if (env.night > 0.4 && Math.random() < dt * 5) parts.push({ x: cs.tx + (Math.random() - 0.5) * 80, y: 3 + Math.random() * 6, z: cs.tz + (Math.random() - 0.5) * 80, vx: (Math.random() - 0.5) * 2, vy: 0.4, vz: (Math.random() - 0.5) * 2, g: 0, t: 0, life: 3, s: 0.3, col: '#e8ff7a', blink: true });
   let n = 0;
   for (let k = parts.length - 1; k >= 0; k--) {
-    const p = parts[k];
-    p.t += dt;
-    if (p.t < 0) continue;
-    if (p.t >= p.life) { parts.splice(k, 1); continue; }
-    p.vy -= p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-    if (p.y < TOP && p.vy < 0) { p.y = TOP; p.vy *= -0.3; p.vx *= 0.6; p.vz *= 0.6; }
+    const pt = parts[k];
+    pt.t += dt;
+    if (pt.t < 0) continue;
+    if (pt.t >= pt.life) { parts.splice(k, 1); continue; }
+    pt.vy -= pt.g * dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.z += pt.vz * dt;
+    if (!pt.seed && pt.y < 1.2 && pt.vy < 0) { pt.y = 1.2; pt.vy *= -0.3; pt.vx *= 0.6; pt.vz *= 0.6; }
     if (n >= 900) continue;
-    const u = p.t / p.life, s = p.s * (p.spin ? Math.sin(u * Math.PI) * 1.4 : 1 - u * 0.6) * (p.blink ? (Math.sin(p.t * 6) > 0 ? 1 : 0.2) : 1);
-    e.set(p.t * 3, p.t * 4, 0); q.setFromEuler(e);
-    m4.compose(v3.set(p.x, p.y, p.z), q, s3.set(s, s, s));
-    partMesh.setMatrixAt(n, m4); partMesh.setColorAt(n, PC.set(p.col)); n++;
+    const u = pt.t / pt.life, s = pt.s * (pt.spin ? Math.sin(u * Math.PI) * 1.4 : pt.seed ? 1 : 1 - u * 0.6) * (pt.blink ? (Math.sin(pt.t * 6) > 0 ? 1 : 0.2) : 1);
+    e.set(pt.t * 3, pt.t * 4, 0); q.setFromEuler(e);
+    m4.compose(v3.set(pt.x, pt.y, pt.z), q, s3.set(s, s, s));
+    partMesh.setMatrixAt(n, m4); partMesh.setColorAt(n, PC.set(pt.col)); n++;
   }
   partMesh.count = n; partMesh.instanceMatrix.needsUpdate = true; if (partMesh.instanceColor) partMesh.instanceColor.needsUpdate = true;
-  // rain and snow
-  if (env.rain > 0.02) for (let k = 0; k < Math.round(env.rain * 260 * dt * (1 + env.storm)); k++) drops.push({ x: (Math.random() - 0.5) * 140, y: 50 + Math.random() * 10, z: (Math.random() - 0.5) * 130 - 5 });
-  if (env.snow > 0.02) for (let k = 0; k < Math.round(env.snow * 90 * dt); k++) flakes.push({ x: (Math.random() - 0.5) * 140, y: 50, z: (Math.random() - 0.5) * 130 - 5, ph: Math.random() * 6 });
+  // rain and snow fill the space between the camera and the farmer
+  const wx = (cs.tx + cam.position.x) / 2, wz = (cs.tz + cam.position.z) / 2;
+  if (env.rain > 0.02) for (let k = 0; k < Math.round(env.rain * 520 * dt * (1 + env.storm * 0.6)); k++) drops.push({ x: wx + (Math.random() - 0.5) * 90, y: 40 + Math.random() * 10, z: wz + (Math.random() - 0.5) * 90 });
+  if (env.snow > 0.02) for (let k = 0; k < Math.round(env.snow * 130 * dt); k++) flakes.push({ x: wx + (Math.random() - 0.5) * 90, y: 42, z: wz + (Math.random() - 0.5) * 90, ph: Math.random() * 6 });
   n = 0;
   for (let k = drops.length - 1; k >= 0; k--) {
     const r = drops[k];
     r.y -= 60 * dt; r.x -= 6 * env.wind * dt;
     if (r.y < 1.5) { drops.splice(k, 1); if (Math.random() < 0.15) parts.push({ x: r.x, y: 1.5, z: r.z, vx: 0, vy: 3, vz: 0, g: 20, t: 0, life: 0.2, s: 0.25, col: '#cfe8ff' }); continue; }
-    if (n < 700) { m4.makeTranslation(r.x, r.y, r.z); rainMesh.setMatrixAt(n++, m4); }
+    if (n < 1200) { m4.makeTranslation(r.x, r.y, r.z); rainMesh.setMatrixAt(n++, m4); }
   }
   rainMesh.count = n; rainMesh.instanceMatrix.needsUpdate = true;
   n = 0;
@@ -383,22 +607,23 @@ export function update(dt) {
   }
   snowMesh.count = n; snowMesh.instanceMatrix.needsUpdate = true;
   if (bolt.visible && (bolt.userData.t -= dt) <= 0) bolt.visible = false;
-  // tutorial guide
+  if (ghostRing.visible && (ghostRing.userData.t -= dt) <= 0) ghostRing.visible = false;
+  // tutorial guide: arrow, pulsing ring and a glowing trail from the farmer
   arrow.visible = ring.visible = false; trailMesh.count = 0;
   if (guide) {
-    const gx = guide.x, gz = guide.z, gy = guide.y ?? TOP;
+    const gx = guide.x, gz = guide.z, gy = guide.y ?? groundY(gx, gz);
     arrow.visible = true;
     arrow.position.set(gx, gy + (guide.h ?? 8) + Math.abs(Math.sin(t * 4)) * 2, gz);
     arrow.rotation.y = t * 1.2; arrow.scale.setScalar(guide.s || 1);
     ring.visible = guide.ring !== false; ring.position.set(gx, gy + 0.1, gz);
-    const rs = 1 + (t * 1.2 % 1) * 0.8; ring.scale.set(rs * (guide.r || 1), rs * (guide.r || 1), 1); ring.material.opacity = 0.9 * (1 - (t * 1.2 % 1));
+    const rs = 1 + ((t * 1.2) % 1) * 0.8; ring.scale.set(rs * (guide.r || 1), rs * (guide.r || 1), 1); ring.material.opacity = 0.9 * (1 - ((t * 1.2) % 1));
     if (guide.trail) {
-      const fx = W.farmer.x, fz = W.farmer.z, L = Math.hypot(gx - fx, gz - fz);
+      const L = Math.hypot(gx - p.x, gz - p.z);
       let m = 0;
-      for (let s = 2.5; s < L - 3 && m < 80; s += 2.5) {
-        const u = s / L, wave = (s - t * 8) % 10;
-        const sz = wave < 0 && wave > -3 ? 1.4 : 1;
-        m4.compose(v3.set(fx + (gx - fx) * u, inBed(fx + (gx - fx) * u, fz + (gz - fz) * u) ? TOP + 0.2 : 1.2, fz + (gz - fz) * u), q.identity(), s3.set(sz, 1, sz));
+      for (let s = 3; s < L - 3 && m < 120; s += 2.5) {
+        const u = s / L, wave = (s - t * 12) % 12, sz = wave < 0 && wave > -3 ? 1.5 : 1;
+        const x = p.x + (gx - p.x) * u, z = p.z + (gz - p.z) * u;
+        m4.compose(v3.set(x, groundY(x, z) + 0.2, z), q.identity(), s3.set(sz, 1, sz));
         trailMesh.setMatrixAt(m++, m4);
       }
       trailMesh.count = m; trailMesh.instanceMatrix.needsUpdate = true;

@@ -163,20 +163,73 @@ export function fruitGeo(crop, kind) {
 }
 
 // ---------------------------------------------------------------- characters & stalls
-export function farmerGeo(frame) {
-  return memo('farmer' + frame, () => {
+// a little farmer; pal swaps colours for the neighbours
+export const FARMER_PAL = { shirt: '#e8584c', pants: '#4a7ae0', hat: '#ffd86a', band: '#ff5a4a', hair: '#7a4a2c', skin: '#ffcfa0', boots: '#5a3a24' };
+export const FARMER_S = 0.72; // farmers are built on a finer grid than the world
+// frame 0 stands, 1 and 2 are the two halves of a stride (legs and arms swing opposite ways)
+export function farmerGeo(frame, pal = FARMER_PAL, key = 'me') {
+  return memo('farmer' + frame + key, () => {
     const V = new Vox(rng(3));
-    const legs = frame ? [[-1, 0, 1], [1, 0, -1]] : [[-1, 0, 0], [1, 0, 0]];
-    for (const [x, , z] of legs) V.box(x, 0, z, x, 1, z, '#5a3a24', 0.02);
-    V.box(-1, 2, -1, 1, 4, 0, '#4a7ae0', 0.03);
-    V.box(-1, 4, -1, 1, 4, 0, '#e8584c', 0.02); V.set(-2, 3, 0, '#e8584c'); V.set(2, 3, 0, '#e8584c'); V.set(-2, 2, 0, '#ffcfa0'); V.set(2, 2, 0, '#ffcfa0');
-    V.box(-1, 5, -1, 1, 7, 1, '#ffcfa0', 0.02);
-    V.set(-1, 6, 1, '#2a2a2a', 0); V.set(1, 6, 1, '#2a2a2a', 0);
-    V.box(-1, 7, -1, 1, 7, 1, '#7a4a2c', 0.02); V.set(-1, 6, -1, '#7a4a2c');
-    for (let x = -3; x <= 3; x++) for (let z = -3; z <= 3; z++) if (Math.abs(x) + Math.abs(z) < 5) V.set(x, 8, z, (Math.abs(x) + Math.abs(z) === 2 && z >= -1) ? '#ff5a4a' : '#ffd86a', 0.04);
-    V.box(-1, 9, -1, 1, 9, 1, '#ffe48a', 0.03);
+    const sw = frame === 1 ? 1 : frame === 2 ? -1 : 0;
+    for (const [x0, x1, s] of [[-2, -1, sw], [1, 2, -sw]]) {
+      V.box(x0, 0, -1 + s, x1, 0, 1 + s, pal.boots || '#5a3a24', 0.02);
+      V.box(x0, 1, -1 + s, x1, 1, 1 + s, pal.pants, 0.03);
+      V.box(x0, 2, -1, x1, 3, 1, pal.pants, 0.03);
+    }
+    // overalls over a shirt: waist band, bib in front, straps over the shoulders and down the back
+    V.box(-2, 4, -1, 2, 7, 1, pal.shirt, 0.03);
+    V.box(-2, 4, -1, 2, 4, 1, pal.pants, 0.03);
+    V.box(-1, 5, 1, 1, 6, 1, pal.pants, 0.03);
+    for (const x of [-1, 1]) { V.set(x, 7, 1, pal.pants); V.box(x, 5, -1, x, 7, -1, pal.pants, 0.02); V.set(x, 6, 1, '#ffd84e', 0); }
+    for (const [x, s] of [[-3, -sw], [3, sw]]) {
+      V.box(x, 6, 0, x, 7, 0, pal.shirt, 0.02);
+      V.box(x, 4, s, x, 5, s, pal.skin, 0.02);
+    }
+    // a big friendly head
+    V.box(-2, 8, -2, 2, 11, 2, pal.skin, 0.02);
+    V.set(-1, 9, 2, '#2a2230', 0); V.set(1, 9, 2, '#2a2230', 0);
+    V.set(-1, 10, 2, '#2a2230', 0); V.set(1, 10, 2, '#2a2230', 0);
+    V.set(-2, 9, 2, '#ff9a8a', 0); V.set(2, 9, 2, '#ff9a8a', 0);
+    V.box(-2, 9, -2, 2, 11, -2, pal.hair, 0.03);
+    for (const x of [-2, 2]) V.box(x, 10, -2, x, 11, 0, pal.hair, 0.03);
+    // straw hat
+    for (let x = -3; x <= 3; x++) for (let z = -3; z <= 3; z++) if (Math.abs(x) + Math.abs(z) < 6) V.set(x, 12, z, (x + z) & 1 ? pal.hat : shade(pal.hat, 0.93), 0.02);
+    V.box(-2, 13, -2, 2, 13, 2, pal.band, 0.02);
+    V.box(-2, 14, -2, 2, 14, 2, pal.hat, 0.03);
+    V.box(-1, 15, -1, 1, 15, 1, shade(pal.hat, 1.06), 0.02);
     return mesh(V);
   });
+}
+export function heldGeo(kind) {
+  return memo('held' + kind, () => {
+    const V = new Vox(rng(9));
+    if (kind === 'shovel') { V.box(0, 0, 0, 0, 5, 0, '#a8744b'); V.box(-1, -2, 0, 1, -1, 0, '#c8c6d8'); V.set(0, -3, 0, '#a9a7bd'); V.box(-1, 6, 0, 1, 6, 0, '#7f5238'); }
+    else { V.box(-1, 0, 0, 1, 3, 0, '#f2e6c8'); V.box(-1, 3, 0, 1, 3, 0, '#c8a86a'); V.set(0, 1, 1, kind, 0); V.set(0, 2, 1, kind, 0); }
+    return mesh(V, { offset: [-0.5, 0, -0.5] });
+  });
+}
+
+// ---------------------------------------------------------------- scenery drawn straight into a shared voxel set
+export function drawTree(V, x, y, z, v) {
+  const h = 4 + (v % 3), r = 3.4 + (v % 2) * 0.7;
+  V.box(x, y, z, x, y + h, z, '#8a5a3a');
+  V.ball(x, y + h + 3, z, r, (a, b, c) => (hash(a + x, b + v, c + z) < 0.5 ? '#5cb860' : '#4aa452'), 1, 0.06);
+  if (v % 4 === 0) V.ball(x + 2, y + h + 5, z - 1, r * 0.6, '#68c46a', 1, 0.06);
+}
+export function drawLamp(V, x, y, z) {
+  V.box(x, y, z, x, y, z, '#4a4462', 0.02);
+  V.box(x, y + 1, z, x, y + 7, z, '#5e5878', 0.02);
+  V.box(x - 1, y + 8, z - 1, x + 1, y + 8, z + 1, '#4a4462', 0.02);
+  V.set(x, y + 9, z, '#4a4462', 0);
+}
+export function drawPost(V, x, y, z, h = 3) { V.box(x, y, z, x, y + h - 1, z, '#b8865a', 0.05); V.set(x, y + h, z, '#d8a878', 0.03); }
+export function drawBench(V, x, y, z) { V.box(x - 2, y + 1, z, x + 2, y + 1, z + 1, '#b8865a', 0.04); V.set(x - 2, y, z, '#7a5434'); V.set(x + 2, y, z, '#7a5434'); V.box(x - 2, y + 2, z, x + 2, y + 2, z, '#a8784a', 0.04); }
+export function drawFlowerbed(V, x, y, z, w = 4) {
+  for (let dx = -w; dx <= w; dx++) for (let dz = -1; dz <= 1; dz++) {
+    V.set(x + dx, y, z + dz, '#6a4228', 0.04);
+    if (hash(x + dx, z + dz, 4) < 0.7) V.set(x + dx, y + 1, z + dz, ['#ff6a8a', '#ffd84e', '#ffffff', '#9a7aff', '#ff9a3a'][Math.floor(hash(x + dx, z + dz, 5) * 5)], 0.02);
+    else V.set(x + dx, y + 1, z + dz, '#5cb860', 0.05);
+  }
 }
 export function npcGeo(kind) {
   return memo('npc' + kind, () => {
@@ -211,14 +264,6 @@ export function stallGeo(kind) {
   });
 }
 export function lanternGeo() { return memo('lantern', () => { const V = new Vox(); V.set(0, 0, 0, '#ffe08a', 0); V.set(0, 1, 0, '#3a3448', 0); return mesh(V, { ao: false }); }); }
-export function treeGeo(v) {
-  return memo('tree' + v, () => {
-    const V = new Vox(rng(v * 11 + 3)), h = 3 + (v % 3);
-    V.box(0, 0, 0, 0, h, 0, '#8a5a3a');
-    V.ball(0, h + 3, 0, 3.4 + (v % 2) * 0.6, (x, y, z) => (hash(x + v, y, z) < 0.5 ? '#5cb860' : '#4aa452'));
-    return mesh(V);
-  });
-}
 export function cloudGeo(v) {
   return memo('cloud' + v, () => {
     const V = new Vox(rng(v * 5 + 1)), R = V.R;

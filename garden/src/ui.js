@@ -1,6 +1,7 @@
-// DOM UI (HUD, hotbar, shop sheets, toasts), touch input on the 3D view, and the in-world tutorial.
+// DOM UI and controls: joystick + camera drag, tap to plant, Collect prompts, teleport buttons,
+// shop sheets, toasts, and the wordless tutorial.
 import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, inBed } from './data.js';
-import { G, on, emit, plant, harvest, harvestAll, sell, buySeed, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, itemKey, placeBlock, reset, save } from './state.js';
+import { G, on, plant, collect, sell, buySeed, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, itemKey, placeBlock, reset, save } from './state.js';
 import { speed, isNight, bloodMoon } from './sim.js';
 import * as Wd from './world.js';
 import { ICON } from './icons.js';
@@ -17,11 +18,17 @@ export function fmt(n) {
 }
 export function fmtTime(s) { s = Math.max(0, Math.ceil(s)); return s >= 3600 ? Math.floor(s / 3600) + 'h ' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + 'm' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
+const REACH = 8;      // how close you must stand for the Collect prompt
+const TAP_REACH = 15; // tapping a fruit directly works from a bit further
 const SVG = {
   gear: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 0h2v2h1V1h1v1h1v1H8v1h2v2H8v1h1v1H8v1H7V8H6v2H4V8H3v1H2V8H1V7h1V6H0V4h2V3H1V2h1V1h1v1h1z"/><path fill="#3a3a5a" d="M4 4h2v2H4z"/></svg>',
-  basket: '<svg viewBox="0 0 12 10" shape-rendering="crispEdges"><path fill="#f04a5a" d="M2 1h3v3H2z"/><path fill="#ffd84e" d="M5 0h3v3H5z"/><path fill="#5cc060" d="M8 1h2v3H8z"/><path fill="#1a1a2e" d="M0 4h12v1H0z"/><path fill="#c8904a" d="M1 5h10v4H1z"/><path fill="#a8703a" d="M2 6h1v1H2zm2 0h1v1H4zm2 0h1v1H6zm2 0h1v1H8zM3 7h1v1H3zm2 0h1v1H5zm2 0h1v1H7zm2 0h1v1H9z"/><path fill="#1a1a2e" d="M1 9h10v1H1z"/></svg>',
   shovel: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#a8744b" d="M8 0h2v1H9v1H8v1H7v1H6v1H5V4h1V3h1V2h1z"/><path fill="#c8c6d8" d="M3 4h2v1h1v2H5v1H4v1H2V8H1V6h1V5h1z"/><path fill="#8a88a0" d="M2 8h2v1H2zM5 6h1v1H5z"/></svg>',
   hand: '<svg viewBox="0 0 11 13" shape-rendering="crispEdges"><path fill="#1a1a2e" d="M3 0h2v1h1v4h4v1h1v5h-1v1H9v1H3v-1H2v-1H1V9H0V7h1V6h2z"/><path fill="#fff6e6" d="M4 1h1v5h1V5h1v1h1V6h1v1h1v4H9v1H4v-1H3v-1H2V9H1V8h1V7h1V6h1z"/><path fill="#ffd8b8" d="M4 10h5v1H4z"/></svg>',
+  grab: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M2 1h1v4h1V0h1v5h1V1h1v4h1V3h1v5H8v1H3V8H2V7H1V5h1z"/></svg>',
+  shop: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M1 1h8v2H1zM1 4h8v5H1z"/><path fill="#3a3a5a" d="M4 5h2v4H4z"/></svg>',
+  sprout: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 4h2v6H4zM1 1h3v1h1v2H2V2H1zM6 2h3v1H8v1H5V3h1z"/></svg>',
+  coin: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M3 1h4v1h1v1h1v4H8v1H7v1H3V8H2V7H1V3h1V2h1z"/><path fill="rgba(0,0,0,0.22)" d="M4 3h2v4H4z"/></svg>',
+  house: '<svg viewBox="0 0 10 10" shape-rendering="crispEdges"><path fill="#fff" d="M4 1h2v1h1v1h1v1h1v1H1V4h1V3h1V2h1zM2 5h6v4H6V7H4v2H2z"/></svg>',
 };
 const WICON = {
   clear: '<svg class="wi" viewBox="0 0 9 9" shape-rendering="crispEdges"><path fill="#ffb43a" d="M4 0h1v1H4zM4 8h1v1H4zM0 4h1v1H0zM8 4h1v1H8z"/><path fill="#ffd84e" d="M2 2h5v5H2z"/><path fill="#fff4a0" d="M2 2h3v1H2z"/></svg>',
@@ -33,7 +40,8 @@ const WICON = {
 };
 
 let ui = {};
-const P = { down: false, pts: new Map(), mode: null, last: null, stall: null, moved: false, pinch: null };
+export const input = { x: 0, y: 0 };
+const keys = new Set();
 
 // ---------------------------------------------------------------- build
 export function build(app) {
@@ -44,26 +52,29 @@ export function build(app) {
       <button class="pill blk" id="weather"></button>
       <button class="blk" id="settings" aria-label="Settings">${SVG.gear}</button>
     </div>
+    <nav id="tp">
+      <button class="blk tp" data-tp="seeds">${SVG.sprout}Seeds</button>
+      <button class="blk tp" data-tp="sell">${SVG.coin}Sell<span class="badge" id="bagN" hidden>0</span></button>
+      <button class="blk tp" data-tp="garden">${SVG.house}Garden</button>
+    </nav>
     <div id="goal" class="blk" hidden><img alt=""><span class="txt"></span><span class="n"></span><div class="bar"><i></i></div></div>
-    <button class="blk" id="basket" aria-label="Basket">${SVG.basket}<span id="bagN">0</span></button>
-    <div id="side"><button class="blk" id="harvest" aria-label="Harvest all">${SVG.basket}<span class="badge" id="ripeN" hidden>0</span></button></div>
+    <div id="stick"><div class="base"></div><div class="knob"></div></div>
+    <button id="act" class="blk" hidden><span class="ico"></span><span class="lbl">Collect</span><span class="badge" hidden></span></button>
+    <button id="prompt" class="blk" hidden><i class="key">${SVG.grab}</i><span><b>Collect</b><small></small></span></button>
     <div id="tray" class="blk"><div id="hotbar"></div></div>
     <div id="info" class="blk" hidden><div class="t"></div><div class="pb"><i></i></div><div class="s"></div></div>
     <div id="toasts"></div>
     <div id="fx"></div>
     <div id="hand" hidden>${SVG.hand}</div>
+    <div id="fade"></div>
     <div id="shade"></div>
     <section class="sheet blk" id="sheet"><header><h2></h2><span class="sub"></span><button class="x blk" aria-label="Close">X</button></header><div class="list"></div><footer hidden></footer></section>
   `);
-  ui = { money: $('#money'), weather: $('#weather'), hotbar: $('#hotbar'), harvest: $('#harvest'), ripeN: $('#ripeN'), basket: $('#basket'), bagN: $('#bagN'), info: $('#info'), toasts: $('#toasts'), fx: $('#fx'), hand: $('#hand'), goal: $('#goal'), shade: $('#shade'), sheet: $('#sheet') };
+  ui = { money: $('#money'), weather: $('#weather'), hotbar: $('#hotbar'), act: $('#act'), prompt: $('#prompt'), bagN: $('#bagN'), info: $('#info'), toasts: $('#toasts'), fx: $('#fx'), hand: $('#hand'), goal: $('#goal'), shade: $('#shade'), sheet: $('#sheet'), stick: $('#stick'), fade: $('#fade'), sellBtn: $('[data-tp="sell"]') };
   ui.shown = G.money;
   $('#settings').onclick = () => openSheet('settings');
   ui.weather.onclick = () => toast(G.weather.type !== 'clear' ? WEATHER[G.weather.type].msg : isNight() ? 'Moonlight can make ripe fruit Moonlit (x2).' : 'The weather changes every few minutes.');
-  ui.harvest.onclick = () => {
-    if (!totalRipe()) { toast('Nothing is ripe yet. Ripe fruit sparkles!'); sfx('error'); return; }
-    harvestAll();
-  };
-  ui.basket.onclick = () => openSheet('sell');
+  document.querySelectorAll('.tp').forEach((b) => (b.onclick = () => teleportTo(b.dataset.tp)));
   ui.shade.onclick = closeSheet;
   $('.x', ui.sheet).onclick = closeSheet;
   ui.hotbar.addEventListener('click', (e) => {
@@ -72,13 +83,28 @@ export function build(app) {
     G.sel = G.sel === s.dataset.id ? null : s.dataset.id;
     sfx('tap'); renderHotbar();
   });
+  // action button and prompt: tap = once, hold = keep collecting everything in reach
+  for (const el of [ui.act, ui.prompt]) {
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); actHeld = true; actT = 0; doAction(true); });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, () => { actHeld = false; });
+  }
   renderHotbar();
   const gl = $('#gl');
   gl.addEventListener('pointerdown', down);
   gl.addEventListener('pointermove', move);
   gl.addEventListener('pointerup', up);
   gl.addEventListener('pointercancel', up);
-  gl.addEventListener('wheel', (e) => { e.preventDefault(); Wd.zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY); }, { passive: false });
+  gl.addEventListener('wheel', (e) => { e.preventDefault(); Wd.zoomCam(e.deltaY < 0 ? 1.1 : 1 / 1.1); }, { passive: false });
+  addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    keys.add(e.key.toLowerCase());
+    if (e.key === 'e' || e.key === 'E' || e.key === ' ') { e.preventDefault(); doAction(true); }
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= 9) { const it = hotItems()[n - 1]; if (it) { G.sel = G.sel === it.id ? null : it.id; renderHotbar(); } }
+  });
+  addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+  addEventListener('blur', () => keys.clear());
+  placeStick(null);
 }
 
 export function showTitle(app, start) {
@@ -102,103 +128,189 @@ export function renderHotbar() {
   if (k === hotKey) return;
   hotKey = k;
   ui.hotbar.innerHTML = '';
-  for (const it of items) {
+  items.forEach((it, i) => {
     const b = h('button', 'slot blk' + (G.sel === it.id ? ' sel' : ''));
     b.dataset.id = it.id;
-    b.innerHTML = (it.rc ? `<i class="band" style="--rc:${it.rc}"></i>` : '') + (it.img ? `<img src="${it.img}" alt="">` : it.svg) + (it.n ? `<span class="n">${it.n}</span>` : '');
+    b.innerHTML = (it.rc ? `<i class="band" style="--rc:${it.rc}"></i>` : '') + (it.img ? `<img src="${it.img}" alt="">` : it.svg) + (it.n ? `<span class="n">x${it.n}</span>` : '') + `<span class="k">${i + 1}</span>`;
     ui.hotbar.appendChild(b);
-  }
+  });
 }
 const selCrop = () => (G.sel && G.sel.startsWith('seed:') ? G.sel.slice(5) : null);
 function nextSeed(after) {
   if (G.seeds[after] > 0) return;
   const n = CROPS.find((c) => G.seeds[c.id] > 0);
   G.sel = n ? 'seed:' + n.id : null;
-  if (!n && G.tut >= 6) toast('Out of seeds! Get more at the SEEDS stall.');
+  if (!n && G.tut >= 7) toast('Out of seeds! Tap Seeds at the top to buy more.');
 }
 
-// ---------------------------------------------------------------- touch input on the world
+// ---------------------------------------------------------------- touch: joystick on the left, camera on the right, taps anywhere
+const ptrs = new Map();
+let pinch = null;
+function stickZone(x, y) { return x < innerWidth * 0.45 && y > innerHeight * 0.32; }
+function placeStick(p) {
+  const s = ui.stick;
+  if (!p) { s.classList.remove('on'); s.style.left = '78px'; s.style.top = ''; s.style.bottom = 'calc(var(--sb) + 150px)'; $('.knob', s).style.transform = ''; return; }
+  s.classList.add('on'); s.style.left = p.x + 'px'; s.style.top = p.y + 'px'; s.style.bottom = 'auto';
+}
 function down(e) {
   e.preventDefault();
   try { e.target.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-  P.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (P.pts.size === 2) {
-    const [a, b] = [...P.pts.values()];
-    P.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
-    P.mode = null; Wd.setGhost(null);
-    return;
-  }
-  if (P.pts.size > 2) return;
-  const x = e.clientX, y = e.clientY;
-  P.down = true; P.moved = false; P.sx = x; P.sy = y; P.mode = null; P.stall = null; P.last = null;
+  const P = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, t: performance.now(), moved: false, role: null };
+  P.role = stickZone(P.sx, P.sy) && ![...ptrs.values()].some((q) => q.role === 'stick') ? 'stick' : 'cam';
+  ptrs.set(e.pointerId, P);
+  if (P.role === 'stick') placeStick({ x: P.sx, y: P.sy });
+  const cams = [...ptrs.values()].filter((q) => q.role === 'cam');
+  if (cams.length === 2) pinch = { d: Math.hypot(cams[0].x - cams[1].x, cams[0].y - cams[1].y) };
   ui.info.hidden = true; ui.infoPl = null;
-  const pl = Wd.pickPlant(x, y);
-  if (pl && ripeCount(pl)) { P.mode = 'harvest'; harvest(pl); return; }
-  const crop = selCrop();
-  const gp = Wd.screenToGround(x, y);
-  if (G.sel === 'shovel' && pl) {
-    if (CROP[pl.c].price >= 1000) dialog(`Dig up this ${CROP[pl.c].name}? It will be gone for good.`, 'Dig up', () => dig(pl), 'var(--red)');
-    else { dig(pl); P.mode = 'dig'; }
+}
+function move(e) {
+  const P = ptrs.get(e.pointerId);
+  if (!P) return;
+  const dx = e.clientX - P.x, dy = e.clientY - P.y;
+  P.x = e.clientX; P.y = e.clientY;
+  if (!P.moved && Math.hypot(P.x - P.sx, P.y - P.sy) > 9) P.moved = true;
+  if (P.role === 'stick') {
+    let ox = P.x - P.sx, oy = P.y - P.sy;
+    const r = 52, l = Math.hypot(ox, oy);
+    if (l > r) { ox = (ox / l) * r; oy = (oy / l) * r; }
+    $('.knob', ui.stick).style.transform = `translate(${ox}px, ${oy}px)`;
+    input.x = ox / r; input.y = -oy / r;
     return;
   }
-  if (crop && gp && inBed(gp.x, gp.z, 0) && !pl) { P.mode = 'plant'; tryPlant(crop, gp); return; }
-  if (pl) { showInfo(pl); sfx('tap'); return; }
-  const st = Wd.pickStall(x, y);
-  if (st) { P.stall = st; return; }
-  if (gp) {
-    Wd.walkTo(gp.x, gp.z);
-    if (inBed(gp.x, gp.z) && !crop) { if (G.sel === 'shovel') return; toast(Object.keys(G.seeds).length ? 'Pick a seed below, then tap the soil.' : 'No seeds! Get some at the SEEDS stall.'); pulseHotbar(); }
+  const cams = [...ptrs.values()].filter((q) => q.role === 'cam');
+  if (cams.length >= 2 && pinch) {
+    const d = Math.hypot(cams[0].x - cams[1].x, cams[0].y - cams[1].y);
+    Wd.zoomCam(d / pinch.d); pinch.d = d;
+    return;
   }
+  if (P.moved) Wd.rotateCam(dx, dy);
+}
+function up(e) {
+  const P = ptrs.get(e.pointerId);
+  if (!P) return;
+  ptrs.delete(e.pointerId);
+  if (P.role === 'stick') { input.x = input.y = 0; placeStick(null); }
+  if ([...ptrs.values()].filter((q) => q.role === 'cam').length < 2) pinch = null;
+  if (!P.moved && performance.now() - P.t < 450 && e.type === 'pointerup') tap(P.sx, P.sy);
+}
+
+// ---------------------------------------------------------------- taps on the world
+function tap(x, y) {
+  const fr = Wd.pickFruit(x, y);
+  const p = Wd.W.player;
+  if (fr && G.sel !== 'shovel') {
+    const f = fr.pl._fw[fr.k];
+    if (Math.hypot(f.x - p.x, f.z - p.z) <= TAP_REACH) { grab(fr.pl, fr.k); return; }
+    tooFar(f); return;
+  }
+  const pl = Wd.pickPlant(x, y);
+  if (pl) {
+    if (G.sel === 'shovel') {
+      if (CROP[pl.c].price >= 1000) dialog(`Dig up this ${CROP[pl.c].name}? It will be gone for good.`, 'Dig up', () => dig(pl), 'var(--red)');
+      else dig(pl);
+      Wd.faceTo(pl.x, pl.z);
+      return;
+    }
+    if (ripeCount(pl)) {
+      const k = pl.fr.findIndex((f) => f && f.p >= 1);
+      if (Wd.distTo(pl.x, pl.z) <= TAP_REACH) { grab(pl, k); return; }
+      tooFar((pl._fw && pl._fw[k]) || { x: pl.x, y: 4, z: pl.z }); return;
+    }
+    if (!selCrop()) { showInfo(pl); sfx('tap'); return; }
+  }
+  const shop = Wd.pickShop(x, y);
+  if (shop) { if (Wd.nearShop(16) === shop) openSheet(shop); else { pulse($(`[data-tp="${shop}"]`)); toast(`Tap ${Wd.SHOPS[shop].name} at the top to go there.`); } return; }
+  const gp = Wd.groundPoint(x, y);
+  const crop = selCrop();
+  if (crop && gp) {
+    if (!inBed(gp.x, gp.z)) { toast('Plant seeds on your garden soil.'); sfx('error'); return; }
+    tryPlant(crop, gp);
+    return;
+  }
+  if (pl) { showInfo(pl); sfx('tap'); }
 }
 function tryPlant(crop, gp) {
   const x = Math.round(gp.x), z = Math.round(gp.z);
   const why = placeBlock(crop, x, z);
-  Wd.setGhost(x, z, !why);
-  if (why) { if (!P.last && why === 'crowded') { toast('Too close to another plant.'); sfx('error'); } return; }
-  const pl = plant(crop, x, z);
-  if (pl) { P.last = pl; Wd.walkTo(x + 2, z - 3); if (G.tut < 1) pl.boost = true; nextSeed(crop); renderHotbar(); }
-}
-function move(e) {
-  if (!P.pts.has(e.pointerId)) return;
-  const prev = P.pts.get(e.pointerId);
-  P.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (P.pinch && P.pts.size === 2) {
-    const [a, b] = [...P.pts.values()];
-    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    Wd.zoomBy(d / P.pinch.d, mx, my);
-    Wd.panPixels(mx - P.pinch.mx, my - P.pinch.my);
-    P.pinch = { d, mx, my };
+  if (why) {
+    Wd.flashRing(x, z); sfx('error');
+    toast(why === 'crowded' ? 'Too close to another plant.' : why === 'full' ? 'Your garden is full!' : 'Too close to the edge.');
     return;
   }
-  if (!P.down) return;
-  const x = e.clientX, y = e.clientY;
-  if (Math.hypot(x - P.sx, y - P.sy) > 8) P.moved = true;
-  if (P.mode === 'plant') {
-    const crop = selCrop();
-    const gp = Wd.screenToGround(x, y);
-    if (crop && gp && inBed(gp.x, gp.z)) tryPlant(crop, gp); else Wd.setGhost(null);
-  } else if (P.mode === 'harvest' || P.mode === 'dig') {
-    const steps = Math.max(1, Math.ceil(Math.hypot(x - prev.x, y - prev.y) / 10));
-    for (let s = 1; s <= steps; s++) {
-      const pl = Wd.pickPlant(prev.x + ((x - prev.x) * s) / steps, prev.y + ((y - prev.y) * s) / steps);
-      if (!pl) continue;
-      if (P.mode === 'harvest' && ripeCount(pl)) harvest(pl);
-      if (P.mode === 'dig' && CROP[pl.c].price < 1000) dig(pl);
-    }
-  } else if (!P.mode && P.moved && G.tut >= 6) {
-    Wd.panPixels(x - prev.x, y - prev.y);
+  Wd.faceTo(x, z);
+  const delay = Wd.toss(x, z, Wd.seedColor(crop));
+  const pl = plant(crop, x, z);
+  if (!pl) return;
+  Wd.pop(pl, 'plant', delay);
+  if (G.tut < 1) pl.boost = true;
+  nextSeed(crop); renderHotbar();
+}
+function tooFar(f) { const s = Wd.project(f.x, f.y + 2, f.z); floatText('Walk closer', s.x, s.y, '#ffe9a8'); sfx('error'); }
+function grab(pl, k) {
+  const f = pl._fw && pl._fw[k];
+  if (f) Wd.faceTo(f.x, f.z);
+  collect(pl, k);
+}
+
+// ---------------------------------------------------------------- proximity: Collect prompt + action button
+let actHeld = false, actT = 0, near = null;
+function nearestRipe(R) {
+  const p = Wd.W.player;
+  let best = null, bd = R, count = 0;
+  for (const pl of G.plants) for (let k = 0; k < (pl._fw || []).length; k++) {
+    const f = pl._fw[k];
+    if (!f || !f.ripe) continue;
+    const d = Math.hypot(f.x - p.x, f.z - p.z);
+    if (d > R) continue;
+    count++;
+    if (d < bd) { bd = d; best = { pl, k, f }; }
   }
+  return best ? { ...best, count } : null;
 }
-function up(e) {
-  P.pts.delete(e.pointerId);
-  if (P.pts.size < 2) P.pinch = null;
-  if (!P.down || P.pts.size) return;
-  P.down = false;
-  Wd.setGhost(null);
-  if (P.stall && !P.moved && Wd.pickStall(e.clientX, e.clientY) === P.stall) openSheet(P.stall);
-  P.mode = null;
+function doAction(fromPress) {
+  if (!near) return;
+  if (near.kind === 'fruit') { const n = nearestRipe(REACH); if (n) grab(n.pl, n.k); }
+  else if (fromPress) openSheet(near.kind);
 }
-function pulseHotbar() { ui.hotbar.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(0)' }], { duration: 300 }); }
+function updateProximity(dt) {
+  const nr = nearestRipe(REACH);
+  const shop = nr ? null : Wd.nearShop(12);
+  near = nr ? { kind: 'fruit', ...nr } : shop ? { kind: shop } : null;
+  if (sheetKind || document.getElementById('title')) near = null;
+  if (!near) { ui.act.hidden = true; ui.prompt.hidden = true; actHeld = false; return; }
+  ui.act.hidden = false;
+  const fruit = near.kind === 'fruit';
+  const label = fruit ? 'Collect' : near.kind === 'seeds' ? 'Shop' : 'Sell';
+  if (ui.actLabel !== label) {
+    ui.actLabel = label;
+    $('.lbl', ui.act).textContent = label;
+    $('.ico', ui.act).innerHTML = $('.key', ui.prompt).innerHTML = fruit ? SVG.grab : SVG.shop;
+    ui.act.classList.toggle('shop', !fruit); ui.prompt.classList.toggle('shop', !fruit);
+  }
+  const badge = $('.badge', ui.act);
+  badge.hidden = !fruit || near.count < 2; badge.textContent = near.count;
+  // floating prompt over the fruit or the shopkeeper
+  const at = fruit ? Wd.project(near.f.x, near.f.y + (near.f.sit ? 3.5 : 1.5), near.f.z) : Wd.project(Wd.SHOPS[near.kind].x, 13, Wd.SHOPS[near.kind].z + 1);
+  ui.prompt.hidden = at.behind;
+  ui.prompt.style.left = at.x + 'px'; ui.prompt.style.top = at.y + 'px';
+  const fr = fruit && near.pl.fr[near.k];
+  const sub = fruit ? CROP[near.pl.c].name + (fr ? ` · ${(CROP[near.pl.c].kg * fr.s).toFixed(2)}kg` : '') : near.kind === 'seeds' ? 'Seed shop' : 'Sell your harvest';
+  const key = label + sub;
+  if (ui.promptKey !== key) { ui.promptKey = key; $('b', ui.prompt).textContent = label; $('small', ui.prompt).textContent = sub; }
+  if (actHeld && fruit && (actT += dt) > 0.12) { actT = 0; doAction(false); }
+}
+
+// ---------------------------------------------------------------- teleports
+export function teleportTo(where) {
+  closeSheet(true);
+  ui.fade.classList.remove('go'); void ui.fade.offsetWidth; ui.fade.classList.add('go');
+  sfx('open');
+  setTimeout(() => {
+    if (where === 'garden') Wd.teleport(Wd.HOME, Math.PI);
+    else Wd.teleport(Wd.SHOPS[where].spot, Math.PI);
+    if (where !== 'garden') setTimeout(() => openSheet(where), 260);
+  }, 140);
+}
 
 // ---------------------------------------------------------------- plant info bubble
 function showInfo(pl) { ui.infoPl = pl; ui.infoT = 3.5; ui.info.hidden = false; updateInfo(); }
@@ -219,19 +331,19 @@ function updateInfo() {
   $('.s', ui.info).textContent = label;
   const p = Wd.plantScreen(pl, 1);
   ui.info.style.left = Math.max(84, Math.min(innerWidth - 84, p.x)) + 'px';
-  ui.info.style.top = Math.max(100, p.y - 14) + 'px';
+  ui.info.style.top = Math.max(150, p.y - 14) + 'px';
 }
 
 // ---------------------------------------------------------------- sheets
-let sheetKind = null, sheetTimer = 0;
+let sheetKind = null, sheetTick = 0;
 export function openSheet(kind) {
   sheetKind = kind;
   ui.shade.classList.add('on'); ui.sheet.classList.add('open');
+  input.x = input.y = 0; placeStick(null); ptrs.clear();
   renderSheet();
   sfx('open');
-  if (kind === 'seeds' || kind === 'sell') Wd.walkTo(kind === 'seeds' ? -15 : 15, -34);
 }
-function closeSheet() { if (!sheetKind) return; sheetKind = null; ui.shade.classList.remove('on'); ui.sheet.classList.remove('open'); sfx('close'); }
+function closeSheet(silent) { if (!sheetKind) return; sheetKind = null; ui.shade.classList.remove('on'); ui.sheet.classList.remove('open'); if (silent !== true) sfx('close'); }
 function renderSheet() {
   const s = ui.sheet, list = $('.list', s), foot = $('footer', s);
   const keepScroll = list.scrollTop;
@@ -252,7 +364,7 @@ function renderSheet() {
     const groups = new Map();
     for (const it of G.bag) { const k = itemKey(it); const g = groups.get(k) || { k, c: it.c, m: it.m, n: 0, v: 0 }; g.n++; g.v += it.v; groups.set(k, g); }
     const gs = [...groups.values()].sort((a, b) => b.v - a.v);
-    if (!gs.length) list.appendChild(h('div', 'empty-note', 'Your basket is empty.<br>Tap ripe crops to pick them.'));
+    if (!gs.length) list.appendChild(h('div', 'empty-note', 'Your basket is empty.<br>Walk up to ripe crops and tap Collect.'));
     for (const g of gs) {
       const muts = MUT_ORDER.filter((m) => g.m.includes(m));
       const row = h('div', 'row blk', `<img src="${ICON[g.c]}" alt=""><div class="meta"><div class="name">${CROP[g.c].name}${g.n > 1 ? ' x' + g.n : ''}</div><div class="tag">${muts.length ? muts.map((m) => `<span style="color:${MUTS[m].col};-webkit-text-stroke:0.6px #3a3a5a">${MUTS[m].name}</span>`).join('') : '<span style="color:#8a86a0">Fresh</span>'}</div></div>`);
@@ -270,9 +382,9 @@ function renderSheet() {
     $('h2', s).textContent = 'Settings'; $('.sub', s).textContent = '';
     const tog = (label, key, fn) => { const r = h('div', 'setrow', `<span>${label}</span>`); const b = h('button', 'buy blk' + (G[key] ? '' : ' no'), G[key] ? 'On' : 'Off'); b.onclick = () => { G[key] = !G[key]; fn(G[key]); sfx('tap'); renderSheet(); }; r.appendChild(b); list.appendChild(r); };
     tog('Sound', 'sound', setSound); tog('Music', 'music', setMusic);
-    list.appendChild(h('div', 'stats', `<span>Planted</span><b>${fmt(G.stats.planted)}</b><span>Harvested</span><b>${fmt(G.stats.harvested)}</b><span>Earned</span><b>$${fmt(G.stats.earned)}</b><span>Best fruit</span><b>$${fmt(G.stats.best)}</b>`));
+    list.appendChild(h('div', 'stats', `<span>Move</span><b>Left thumb</b><span>Look around</span><b>Drag right side</b><span>Zoom</span><b>Pinch</b><span>Planted</span><b>${fmt(G.stats.planted)}</b><span>Harvested</span><b>${fmt(G.stats.harvested)}</b><span>Earned</span><b>$${fmt(G.stats.earned)}</b><span>Best fruit</span><b>$${fmt(G.stats.best)}</b>`));
     const r = h('button', 'big red blk', 'New garden');
-    r.onclick = () => dialog('Erase this garden and start over?', 'Erase', () => { reset(); closeSheet(); renderHotbar(); }, 'var(--red)');
+    r.onclick = () => dialog('Erase this garden and start over?', 'Erase', () => { reset(); closeSheet(); renderHotbar(); Wd.teleport(Wd.HOME); }, 'var(--red)');
     list.appendChild(r);
   }
   list.scrollTop = keepScroll;
@@ -285,7 +397,7 @@ function holdRepeat(b) {
 }
 function dialog(msg, yes, fn, col) {
   const d = h('div', '', `<div class="box blk"><div>${msg}</div><div class="btns"><button class="blk" style="--c:#9a96a8">Cancel</button><button class="blk" style="--c:${col}">${yes}</button></div></div>`);
-  d.id = 'dialog'; document.body.querySelector('#app').appendChild(d);
+  d.id = 'dialog'; $('#app').appendChild(d);
   const [no, ok] = d.querySelectorAll('button');
   no.onclick = () => d.remove(); ok.onclick = () => { d.remove(); fn(); };
   sfx('open');
@@ -307,31 +419,33 @@ const floatAt = (str, r) => floatText(str, r.left + r.width / 2, r.top, '#a8ff8a
 function flyIcon(src, from, to, delay, done) {
   const i = h('img', 'fly'); i.src = src; ui.fx.appendChild(i);
   const mx = (from.x + to.x) / 2, my = Math.min(from.y, to.y) - 80;
-  const a = i.animate([{ transform: `translate(${from.x}px,${from.y}px) scale(0.6)` }, { transform: `translate(${mx}px,${my}px) scale(1.25)`, offset: 0.45 }, { transform: `translate(${to.x}px,${to.y}px) scale(0.7)` }], { duration: 650, delay, easing: 'cubic-bezier(.4,0,.6,1)', fill: 'both' });
+  const a = i.animate([{ transform: `translate(${from.x}px,${from.y}px) scale(0.6)` }, { transform: `translate(${mx}px,${my}px) scale(1.3)`, offset: 0.45 }, { transform: `translate(${to.x}px,${to.y}px) scale(0.7)` }], { duration: 600, delay, easing: 'cubic-bezier(.4,0,.6,1)', fill: 'both' });
   a.onfinish = () => { i.remove(); done && done(); };
 }
 const center = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+const under = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.bottom - 12 }; }; // point from below at a top-bar button
 const bump = (el) => { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
+const pulse = (el) => { if (!el) return; el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse'); };
 
-// ---------------------------------------------------------------- tutorial
-// Tiny objective chip + world arrow, glowing trail and a pointing hand. No dialogue.
+// ---------------------------------------------------------------- tutorial: one objective chip, an arrow in the world, a pointing hand
 const STEPS = [
   { text: 'Plant', icon: 'carrot', target: 5, count: () => Math.min(5, G.stats.planted) },
   { text: 'Growing', icon: 'carrot', bar: true },
-  { text: 'Harvest', icon: 'carrot', target: 5, count: () => Math.min(5, G.stats.harvested) },
+  { text: 'Collect', icon: 'carrot', target: 5, count: () => Math.min(5, G.stats.harvested) },
   { text: 'Sell', icon: 'carrot' },
   { text: 'Buy seeds', icon: 'strawberry' },
+  { text: 'Go home', icon: 'strawberry' },
 ];
 let lastStep = -1, rewardT = 0;
 function tutorial(dt) {
-  if (G.tut >= 6 || document.getElementById('title')) { if (!ui.goal.hidden) ui.goal.hidden = true; ui.hand.hidden = true; Wd.setGuide(null); return; }
-  // advance
+  if (G.tut >= 7 || document.getElementById('title')) { if (!ui.goal.hidden) ui.goal.hidden = true; ui.hand.hidden = true; Wd.setGuide(null); return; }
   if (G.tut === 0 && (G.stats.planted >= 5 || (!Object.keys(G.seeds).length && G.plants.length))) G.tut = 1;
   if (G.tut === 1 && totalRipe() > 0) G.tut = 2;
   if (G.tut === 2 && (G.stats.harvested >= 5 || (G.bag.length && !G.plants.length))) G.tut = 3;
   if (G.tut === 3 && G.stats.earned > 0) G.tut = 4;
-  if (G.tut === 4 && CROPS.some((c) => G.bought.c[c.id])) { G.tut = 5; rewardT = 2.4; G.seeds.strawberry = (G.seeds.strawberry || 0) + 2; renderHotbar(); celebrate('Garden unlocked!'); closeSheet(); }
-  if (G.tut === 5) { if ((rewardT -= dt) <= 0) { G.tut = 6; toast('You got 2 Strawberry seeds. Have fun!'); } return; }
+  if (G.tut === 4 && CROPS.some((c) => G.bought.c[c.id])) G.tut = 5;
+  if (G.tut === 5 && !sheetKind && Wd.distTo(Wd.HOME.x, Wd.HOME.z) < 12) { G.tut = 6; rewardT = 2.4; G.seeds.strawberry = (G.seeds.strawberry || 0) + 2; renderHotbar(); celebrate('Garden unlocked!'); }
+  if (G.tut === 6) { ui.hand.hidden = true; Wd.setGuide(null); if ((rewardT -= dt) <= 0) { G.tut = 7; toast('You got 2 Strawberry seeds. Have fun!'); } return; }
   const st = STEPS[G.tut];
   if (G.tut !== lastStep) {
     if (lastStep >= 0) celebrate();
@@ -346,98 +460,118 @@ function tutorial(dt) {
   let frac = st.target ? n / st.target : 0;
   if (st.bar) { const ps = G.plants.filter((p) => p.c === 'carrot'); frac = ps.length ? Math.max(...ps.map((p) => Wd.growth(p))) : 0; }
   $('.bar i', ui.goal).style.width = Math.round(frac * 100) + '%';
-  // world + UI pointers
-  let guide = null, hand = null;
+  let guide = null, hand = null, kind = 'tap';
   if (G.tut === 0) {
     const spot = suggestSpot();
-    if (spot) guide = { x: spot.x, z: spot.z, h: 6, r: 0.6, s: 0.6 };
-    if (!selCrop()) { const s = ui.hotbar.querySelector('[data-id="seed:carrot"]'); if (s) hand = center(s); }
-    else if (spot) { const p = Wd.project(spot.x, 2, spot.z); hand = { x: p.x + 4, y: p.y + 6 }; }
+    if (spot) { guide = { x: spot.x, z: spot.z, h: 6, r: 0.6, s: 0.6 }; const s = Wd.project(spot.x, 2, spot.z); hand = { x: s.x, y: s.y }; }
+    if (!selCrop()) { const sl = ui.hotbar.querySelector('[data-id="seed:carrot"]'); if (sl) hand = center(sl); }
   } else if (G.tut === 2) {
-    const pl = G.plants.find((p) => ripeCount(p));
-    if (pl) { guide = { x: pl.x, z: pl.z, h: 9, r: 0.6, s: 0.6 }; const p = Wd.plantScreen(pl, 0.4); hand = { x: p.x + 4, y: p.y + 10 }; }
+    const target = nearestToPlayer();
+    if (target) {
+      if (near && near.kind === 'fruit') hand = center(ui.act);
+      else {
+        guide = { x: target.x, z: target.z, h: 9, r: 0.6, s: 0.6, trail: true };
+        const b = $('.base', ui.stick).getBoundingClientRect(), p = Wd.W.player;
+        const a = Wd.project(p.x, p.y, p.z), o = Wd.project(target.x, p.y, target.z);
+        const dx = o.x - a.x, dy = o.y - a.y, l = Math.hypot(dx, dy) || 1;
+        ui.hand.style.setProperty('--dx', Math.round((dx / l) * 40) + 'px'); ui.hand.style.setProperty('--dy', Math.round((dy / l) * 40) + 'px');
+        hand = { x: b.left + b.width / 2, y: b.top + b.height / 2 }; kind = 'drag';
+      }
+    }
   } else if (G.tut === 3) {
     if (sheetKind === 'sell') { const b = $('#sellAll'); if (b && G.bag.length) hand = center(b); }
-    else { guide = { x: 15, z: -37, y: 1, h: 20, r: 2.2, trail: true }; hand = Wd.stallScreen('sell'); }
+    else hand = under(ui.sellBtn);
   } else if (G.tut === 4) {
     if (sheetKind === 'seeds') { const b = ui.sheet.querySelector('[data-id="buy-carrot"]'); if (b) hand = center(b); }
-    else { guide = { x: -15, z: -37, y: 1, h: 20, r: 2.2, trail: true }; hand = Wd.stallScreen('seeds'); }
+    else hand = under($('[data-tp="seeds"]'));
+  } else if (G.tut === 5) {
+    hand = under($('[data-tp="garden"]'));
   }
   Wd.setGuide(guide);
   if (hand) {
     ui.hand.hidden = false;
-    const bob = Math.abs(Math.sin(Wd.W.t * 5)) * 8;
-    ui.hand.style.left = hand.x - 8 + 'px'; ui.hand.style.top = hand.y + 4 + bob + 'px';
+    ui.hand.className = kind;
+    ui.hand.style.left = hand.x - 15 + 'px'; ui.hand.style.top = hand.y - 2 + 'px';
   } else ui.hand.hidden = true;
+}
+function nearestToPlayer() {
+  const p = Wd.W.player;
+  let best = null, bd = 1e9;
+  for (const pl of G.plants) if (ripeCount(pl)) { const d = Math.hypot(pl.x - p.x, pl.z - p.z); if (d < bd) { bd = d; best = pl; } }
+  return best;
 }
 let spotCache = null;
 function suggestSpot() {
   if (spotCache && !placeBlock('carrot', spotCache.x, spotCache.z)) return spotCache;
-  for (const [x, z] of [[0, 8], [-4, 8], [4, 8], [-8, 8], [8, 8], [0, 12], [-4, 12], [4, 12], [0, 4], [-8, 12]]) if (!placeBlock('carrot', x, z)) return (spotCache = { x, z });
+  // a row just in front of the farmer, a little to the right so the hand never covers them
+  for (const [x, z] of [[6, 21], [11, 19], [6, 16], [11, 14], [16, 17], [1, 17], [16, 12], [1, 12], [6, 11], [11, 9]]) if (!placeBlock('carrot', x, z)) return (spotCache = { x, z });
   return null;
 }
 function celebrate(big) {
-  const f = Wd.W.farmer;
-  Wd.burst(f.x, 6, f.z, ['#ffd84e', '#5cc060', '#ff6a8a', '#6ab0ff', '#ffffff'], 30, { speed: 12, up: 16, life: 1.2, size: 0.6 });
+  const p = Wd.W.player;
+  Wd.burst(p.x, p.y + 6, p.z, ['#ffd84e', '#5cc060', '#ff6a8a', '#6ab0ff', '#ffffff'], 30, { speed: 12, up: 16, life: 1.2, size: 0.6 });
   sfx(big ? 'hatch' : 'buy');
   ui.goal.classList.add('done');
-  if (big) { const p = Wd.project(f.x, 10, f.z); floatText(big, p.x, p.y, '#ffd84e', true); }
+  if (big) { const s = Wd.project(p.x, p.y + 12, p.z); floatText(big, s.x, s.y, '#ffd84e', true); }
 }
 
 // ---------------------------------------------------------------- per frame
-let lastNight = null, lastPeriod = null, sheetTick = 0;
+let lastNight = null, lastPeriod = null;
 export function update(dt) {
-  // money counter
+  // keyboard movement on desktop
+  if (![...ptrs.values()].some((q) => q.role === 'stick')) {
+    const kx = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+    const ky = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
+    const l = Math.hypot(kx, ky) || 1;
+    input.x = kx / l; input.y = ky / l;
+  }
+  if (sheetKind || document.getElementById('title')) input.x = input.y = 0;
   const d = G.money - ui.shown;
   ui.shown = Math.abs(d) < 1 ? G.money : d < 0 ? G.money : ui.shown + d * (1 - Math.exp(-dt * 8));
   ui.money.textContent = fmt(ui.shown);
-  // weather chip
   const wt = G.weather.type;
   const wk = wt !== 'clear' ? wt + Math.ceil(G.weather.left) : isNight() ? (bloodMoon() ? 'blood' : 'night') : 'clear';
   if (ui.wk !== wk) {
     ui.wk = wk;
     ui.weather.innerHTML = wt !== 'clear' ? WICON[wt] + `<span>${fmtTime(G.weather.left)}</span>` : isNight() ? WICON[bloodMoon() ? 'blood' : 'night'] + `<span>${bloodMoon() ? 'Blood Moon' : 'Night'}</span>` : WICON.clear + '<span>Sunny</span>';
   }
-  const n = totalRipe();
-  ui.ripeN.hidden = !n; ui.ripeN.textContent = n > 99 ? '99+' : n;
-  ui.harvest.classList.toggle('off', !n);
-  ui.bagN.textContent = `${G.bag.length}/${BASKET}`;
-  ui.basket.classList.toggle('full', G.bag.length >= BASKET);
+  ui.bagN.hidden = !G.bag.length; ui.bagN.textContent = G.bag.length >= BASKET ? 'FULL' : G.bag.length;
+  ui.bagN.classList.toggle('full', G.bag.length >= BASKET);
   if (ui.infoPl) { ui.infoT -= dt; updateInfo(); }
-  if (sheetKind && (sheetTick += dt) > 1) { sheetTick = 0; if (sheetKind === 'seeds') $('.sub', ui.sheet).textContent = 'Restock ' + fmtTime(restockIn()); }
+  if (sheetKind === 'seeds' && (sheetTick += dt) > 1) { sheetTick = 0; $('.sub', ui.sheet).textContent = 'Restock ' + fmtTime(restockIn()); }
   renderHotbar();
+  updateProximity(dt);
   tutorial(dt);
   const night = isNight();
-  if (lastNight !== null && night !== lastNight && G.tut >= 6) toast(night ? (bloodMoon() ? 'A Blood Moon rises! Ripe fruit may turn Bloodlit (x4).' : 'Night falls. Moonlight can make fruit Moonlit (x2).') : 'Good morning!');
+  if (lastNight !== null && night !== lastNight && G.tut >= 7) toast(night ? (bloodMoon() ? 'A Blood Moon rises! Ripe fruit may turn Bloodlit (x4).' : 'Night falls. Moonlight can make fruit Moonlit (x2).') : 'Good morning!');
   lastNight = night;
-  const p = period();
-  if (lastPeriod !== null && p !== lastPeriod) { toast('Fresh seeds at the SEEDS stall!'); if (sheetKind === 'seeds') renderSheet(); }
-  lastPeriod = p;
-  // softlock rescue
+  const per = period();
+  if (lastPeriod !== null && per !== lastPeriod) { toast('Fresh seeds at the Seed shop!'); pulse($('[data-tp="seeds"]')); if (sheetKind === 'seeds') renderSheet(); }
+  lastPeriod = per;
   if (G.money < 10 && !Object.keys(G.seeds).length && !G.plants.length && !G.bag.length) { G.seeds.carrot = 3; G.sel = 'seed:carrot'; toast('The seed seller gave you 3 free Carrot seeds!'); }
 }
 
 // ---------------------------------------------------------------- reactions to game events
-let bagFullT = 0;
-on('plant', (pl) => { Wd.pop(pl, 'plant'); Wd.burst(pl.x, 2.2, pl.z, ['#a8744a', '#8e5c3a', '#c08a5a'], 7, { speed: 5, up: 7, life: 0.5, size: 0.35 }); sfx('plant', pl.id); renderHotbar(); });
-on('harvest', ({ pl, got }) => {
-  Wd.pop(pl, 'harvest'); Wd.walkTo(pl.x + 2, pl.z - 3);
-  Wd.burst(pl.x, 4, pl.z, ['#8ff06a', '#5cc060', '#ffffff'], 8, { speed: 6, up: 9, life: 0.5, size: 0.35 });
-  const to = center(ui.basket);
-  got.forEach(({ item, slot }, k) => {
-    const fw = (pl._fw && pl._fw[slot]) || { x: pl.x, y: 4, z: pl.z };
-    const from = Wd.project(fw.x, fw.y, fw.z);
-    flyIcon(ICON[item.c], from, to, k * 60, () => { bump(ui.basket); sfx('pop'); });
-    const special = item.m.find((m) => m !== 'wet' && m !== 'chilled');
-    if ((special || item.big) && k < 2) floatText(`${item.big ? 'Giant ' : ''}${special ? MUTS[special].name + ' ' : ''}${CROP[item.c].name} $${fmt(item.v)}`, from.x, from.y - 20, special ? MUTS[special].col : '#c8f0ff');
-  });
-  sfx('harvest', pl.id);
+let bagFullT = 0, combo = 0, comboT = 0;
+on('plant', (pl) => { setTimeout(() => { Wd.burst(pl.x, 2.2, pl.z, ['#a8744a', '#8e5c3a', '#c08a5a'], 7, { speed: 5, up: 7, life: 0.5, size: 0.35 }); sfx('plant', pl.id); }, 220); renderHotbar(); });
+on('collect', ({ pl, item, at }) => {
+  Wd.pop(pl, 'harvest');
+  const w = at || { x: pl.x, y: 4, z: pl.z };
+  Wd.burst(w.x, w.y, w.z, ['#8ff06a', '#ffffff'], 5, { speed: 5, up: 7, life: 0.4, size: 0.3 });
+  const from = Wd.project(w.x, w.y, w.z);
+  flyIcon(ICON[item.c], from, center(ui.sellBtn), 0, () => bump(ui.sellBtn));
+  const now = performance.now();
+  combo = now - comboT < 900 ? combo + 1 : 0; comboT = now;
+  sfx('harvest', combo);
+  const special = item.m.find((m) => m !== 'wet' && m !== 'chilled');
+  if (special || item.big) floatText(`${item.big ? 'Giant ' : ''}${special ? MUTS[special].name + ' ' : ''}${CROP[item.c].name} $${fmt(item.v)}`, from.x, from.y - 24, special ? MUTS[special].col : '#c8f0ff');
+  else floatText('+1 ' + CROP[item.c].name, from.x, from.y - 18, '#ffffff');
 });
 on('sell', ({ total }) => {
-  const s = Wd.stallScreen('sell'), to = center($('#moneyPill'));
+  const sa = $('#sellAll'), s = center(sa && ui.sheet.classList.contains('open') ? sa : ui.sellBtn), to = center($('#moneyPill'));
   const n = Math.min(12, 3 + Math.floor(Math.log10(total + 1) * 2));
-  for (let k = 0; k < n; k++) flyCoin({ x: s.x + (Math.random() - 0.5) * 60, y: s.y + 30 }, to, k * 45);
-  floatText('+$' + fmt(total), s.x, s.y, '#ffd84e', true);
+  for (let k = 0; k < n; k++) flyCoin({ x: s.x + (Math.random() - 0.5) * 80, y: s.y }, to, k * 45);
+  floatText('+$' + fmt(total), s.x, s.y - 30, '#ffd84e', true);
   sfx('sell');
   save();
 });
@@ -451,7 +585,7 @@ on('ripe', (pl) => { Wd.burst(pl.x, 5, pl.z, ['#ffffff', '#fff6c0'], 6, { speed:
 on('mut', ({ pl, m }) => {
   if (m === 'wet' || m === 'chilled') return;
   const p = Wd.plantScreen(pl, 0.8);
-  floatText(MUTS[m].name + '!', p.x, p.y, MUTS[m].col);
+  if (!p.behind) floatText(MUTS[m].name + '!', p.x, p.y, MUTS[m].col);
   Wd.burst(pl.x, 6, pl.z, [MUTS[m].col, '#ffffff'], 12, { speed: 6, up: 8 });
   sfx('mut');
 });
@@ -459,8 +593,8 @@ on('lightning', ({ x, z }) => { Wd.lightning(x, z); sfx('thunder'); });
 on('moonbeam', (pl) => { for (let k = 0; k < 14; k++) Wd.sparkle(pl.x, 4 + k * 2.5, pl.z, bloodMoon() ? '#ff7080' : '#d6c8ff'); });
 on('broke', () => { toast('Not enough money!'); sfx('error'); });
 on('nostock', () => { toast('Sold out! New seeds in ' + fmtTime(restockIn())); sfx('error'); });
-on('bagfull', () => { const t = performance.now(); if (t - bagFullT < 2000) return; bagFullT = t; toast('Basket full! Sell at the SELL stall.'); sfx('error'); });
+on('bagfull', () => { const t = performance.now(); if (t - bagFullT < 2000) return; bagFullT = t; toast('Basket full! Tap Sell at the top.'); pulse(ui.sellBtn); sfx('error'); });
 on('buy', () => sfx('buy'));
-on('weather', (w) => { if (G.tut >= 6) toast(w === 'clear' ? 'The skies are clearing up.' : WEATHER[w].msg); });
+on('weather', (w) => { if (G.tut >= 7) toast(w === 'clear' ? 'The skies are clearing up.' : WEATHER[w].msg); });
 on('welcome', ({ sec, ripe }) => { if (sec > 30) setTimeout(() => toast(`Welcome back! Your garden grew for ${fmtTime(sec)}.` + (ripe ? ` ${ripe} fruit ripened.` : '')), 600); });
 on('reset', () => { hotKey = ''; lastStep = -1; ui.shown = G.money; });

@@ -75,11 +75,13 @@ function linear(c) {
   if (!v) { const col = new T.Color(c).convertSRGBToLinear(); v = [col.r, col.g, col.b]; lin.set(c, v); }
   return v;
 }
-// opts.offset shifts voxel coords (e.g. [-0.5, 0, -0.5] centres column 0); opts.scale scales the result
+// opts.offset shifts voxel coords (e.g. [-0.5, 0, -0.5] centres column 0); opts.scale scales the result;
+// opts.world is a bigger set to look up neighbours in, opts.solid marks extra solid space (like the ground)
 export function mesh(vox, opts = {}) {
   const off = opts.offset || [-0.5, 0, -0.5], sc = opts.scale || 1, ao = opts.ao !== false;
   const pos = [], nor = [], col = [], idx = [];
-  const occ = (x, y, z) => vox.m.has(key(x, y, z));
+  const W = (opts.world || vox).m, solid = opts.solid;
+  const occ = solid ? (x, y, z) => W.has(key(x, y, z)) || solid(x, y, z) : (x, y, z) => W.has(key(x, y, z));
   for (const [x, y, z, c] of vox.m.values()) {
     const base = linear(c);
     for (const f of FACES) {
@@ -118,6 +120,18 @@ export function mesh(vox, opts = {}) {
   g.computeBoundingSphere();
   g.computeBoundingBox();
   return g;
+}
+
+// split a big set into square chunks so the camera (and the shadow pass) can skip what it can't see
+export function chunks(vox, size, opts = {}) {
+  const parts = new Map();
+  for (const v of vox.m.values()) {
+    const k = Math.floor(v[0] / size) * 4096 + Math.floor(v[2] / size);
+    let p = parts.get(k);
+    if (!p) parts.set(k, (p = new Vox()));
+    p.m.set(key(v[0], v[1], v[2]), v);
+  }
+  return [...parts.values()].map((p) => mesh(p, { ...opts, world: vox }));
 }
 
 // ---- instanced batches: each frame, objects are re-added by geometry key
