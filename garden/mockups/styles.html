@@ -1,0 +1,48 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Grow a Garden Art Styles</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600&family=Lilita+One&family=Fredoka:wght@500;600;700&family=Pixelify+Sans:wght@500;700&family=Gaegu:wght@700&family=Caveat:wght@600;700&family=Bungee&display=swap">
+<style>
+  /* Layout: a contact sheet of six phone screens, each with its letter, name and one-line pitch underneath. */
+  :root {
+    --bg: #eef2ec; --fg: #1d2620; --muted: #5b6a5f; --card: #ffffff; --line: #d4ddd3; --accent: #2f8a4a; --phone: #18201b;
+    --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+    --body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #121813; --fg: #e8efe8; --muted: #9aab9e; --card: #1b231d; --line: #2c382f; --accent: #7fd08f; --phone: #050806; color-scheme: dark; } }
+  :root[data-theme="dark"] { --bg: #121813; --fg: #e8efe8; --muted: #9aab9e; --card: #1b231d; --line: #2c382f; --accent: #7fd08f; --phone: #050806; color-scheme: dark; }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.5 var(--body); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 48px; }
+  .wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 28px; }
+  header { display: grid; gap: 8px; max-width: 62ch; }
+  h1 { font: 800 clamp(30px, 6vw, 48px)/1.02 var(--display); letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 32px 24px; }
+  figure { margin: 0; display: grid; gap: 14px; min-width: 0; }
+  .phone { background: var(--phone); border-radius: 34px; padding: 9px; box-shadow: 0 1px 0 var(--line), 0 18px 40px -22px rgba(0,0,0,0.45); max-width: 360px; width: 100%; justify-self: center; }
+  .screen { position: relative; width: 100%; aspect-ratio: 360 / 740; border-radius: 26px; overflow: hidden; background: #2a3a30; color: #cfe; font-size: 13px; display: grid; place-items: center; text-align: center; }
+  .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  figcaption { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: baseline; max-width: 360px; width: 100%; justify-self: center; }
+  .letter { grid-row: span 3; font: 800 34px/1 var(--display); color: var(--accent); font-variant-numeric: tabular-nums; }
+  .name { font: 600 19px/1.2 var(--display); }
+  .pitch { color: var(--fg); font-size: 15px; min-width: 0; }
+  .like { color: var(--muted); font-size: 13px; }
+  .like b { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; margin-right: 4px; }
+</style>
+</head><body>
+<div class="wrap">
+  <header>
+    <h1>Six looks for the garden</h1>
+    <p>The same moment in each style: a free-form bed where you can plant anywhere, only the Seeds and Sell stalls, and a carrot being dragged from the hotbar onto the soil. Pick a letter, or mix two.</p>
+  </header>
+  <div class="grid">
+    <figure data-style="sticker"><div class="phone"><div class="screen"></div></div><figcaption><span class="letter">A</span><span class="name">Sticker Pop</span><span class="pitch">Thick tinted outlines, glossy fruit and chunky 3D buttons. The look of today's top mobile games.</span><span class="like"><b>Like</b>Royal Match, Supercell games</span></figcaption></figure>
+    <figure data-style="clay"><div class="phone"><div class="screen"></div></div><figcaption><span class="letter">B</span><span class="name">Clay Diorama</span><span class="pitch">Real 3D with soft, toy-like shapes, pastel light and gentle shadows.</span><span class="like"><b>Like</b>Animal Crossing: Pocket Camp, Townscaper</span></figcaption></figure>
+    <figure data-style="voxel"><div class="phone"><div class="screen"></div></div><figcaption><span class="letter">C</span><span class="name">Voxel Blocks</span><span class="pitch">Everything built from little cubes in a tilted diorama, with crisp sun shadows.</span><span class="like"><b>Like</b>Crossy Road, Minecraft</span></figcaption></figure>
+    <figure data-style="paper"><div class="phone"><div class="screen"></div></div><figcaption><span class="letter">D</span><span class="name">Paper Craft</span><span class="pitch">Hand-cut paper layers with real drop shadows, paper grain and washi-tape labels.</span><span class="like"><b>Like</b>Tearaway, Paper Mario</span></figcaption></figure>
+    <figure data-style="watercolor"><div class="phone"><div class="screen"></div></div><figcaption><span class="letter">E</span><span class="name">Watercolor Storybook</span><span class="pitch">Soft pigment washes and sepia ink lines, like a children's picture book.</span><span class="like"><b>Like</b>Beatrix Potter, Studio Ghibli backgrounds</span></figcaption></figure>
+    <figure data-style="hd2d"><div class="phone"><div class="screen"></div></div><figcaption><span class="letter">F</span><span class="name">HD-2D Pixel</span><span class="pitch">Pixel art without hard outlines, lit like a film: god rays, bloom and depth of field.</span><span class="like"><b>Like</b>Octopath Traveler, Sea of Stars</span></figcaption></figure>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script type="module" src="styles/gallery.js"></script></body></html>
