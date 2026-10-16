@@ -1,0 +1,169 @@
+// The economy, simulated. An attentive player starts fresh, picks fruit the moment it ripens, sells at once,
+// and always buys the best seed they can afford that is in stock (digging up their weakest plant once the
+// garden is full). Restocks, fruit sizes, Gold and Rainbow, rain, snow and lightning are rolled like the game,
+// and so is Market Day: the crop of the day sells for triple and the carts sell seeds a quarter off.
+//   node test/economy.mjs [runs]          when each seed first becomes yours, with the values in src/data.js
+//   node test/economy.mjs --tune [runs]   find each crop's sell value so the gaps between seeds hit TARGET
+import { CROPS, RARITIES, RESTOCK, MAX_PLANTS, MARKET_LEN, MARKET_GAP, POOLS } from '../src/data.js';
+
+// minutes from one seed to the next: 2 to Strawberry, 4 more to Blueberry, 10 more to Tulip, then longer and longer
+export const TARGET = [2, 4, 10, 15, 20, 26, 33, 41, 50, 60, 72, 86, 102, 120];
+const DT = 3;
+
+function rnd(st) {
+  st.r = (st.r + 0x6d2b79f5) >>> 0;
+  let t = st.r;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+// size, then a growth mutation (Rainbow x50, Gold x20); env holds weather mutations as bits
+function newFruit(st, p = 0) {
+  let s = 0.85 + rnd(st) * 0.35;
+  if (rnd(st) < 0.04) s *= 1.4 + rnd(st) * 0.8;
+  const g = rnd(st) < 0.001 ? 50 : rnd(st) < 0.006 ? 20 : 1;
+  return { p, s, g, env: 0 };
+}
+const WET = 1, CHILLED = 2, FROZEN = 4, SHOCKED = 8;
+function envMult(e) {
+  let m = 1;
+  if (e & FROZEN) m += 9; else { if (e & WET) m += 1; if (e & CHILLED) m += 1; }
+  if (e & SHOCKED) m += 99;
+  return m;
+}
+
+function fresh(seed) {
+  const st = { r: seed >>> 0, t: 0, money: 20, plants: [], first: CROPS.map(() => Infinity), per: -1, stock: null, gift: false,
+    w: { type: null, left: 0, next: 90 }, bolt: 25, mkt: { next: 70 + 420, left: 0, hot: -1, wares: [] } };
+  st.off = rnd(st) * RESTOCK;
+  st.first[0] = 0;
+  for (let i = 0; i < 5; i++) plantSeed(st, 0, true); // the tutorial's carrots grow six times faster
+  return st;
+}
+function plantSeed(st, k, boost = false) { st.plants.push({ k, g: 0, boost, fr: [], cd: [], spawned: 0 }); }
+// Market Day, as src/sim.js runs it: two carts, each with a seed near your best and one a step or two beyond
+const TIER = Object.fromEntries(CROPS.map((c, i) => [c.id, i]));
+const off = (p) => (p < 100 ? Math.round(p * 0.75) : Math.round((p * 0.75) / 5) * 5);
+function openMarket(st, crops) {
+  const m = st.mkt;
+  m.left = MARKET_LEN;
+  m.hot = st.plants.length ? st.plants[(rnd(st) * st.plants.length) | 0].k : 0;
+  const at = Math.max(0, ...st.plants.map((p) => p.k), ...crops.map((c, i) => (st.money >= c.price * 0.6 ? i : 0)));
+  m.wares = [];
+  for (const pool of Object.values(POOLS)) {
+    const pick = (lo, hi, not) => {
+      const opts = pool.filter((id) => TIER[id] >= lo && TIER[id] <= hi && id !== not);
+      return opts.length ? opts[(rnd(st) * opts.length) | 0] : pool.filter((id) => id !== not).sort((a, b) => Math.abs(TIER[a] - at) - Math.abs(TIER[b] - at))[0];
+    };
+    const a = pick(at - 2, at + 1), b = pick(at + 1, at + 4, a);
+    m.wares.push({ k: TIER[a], n: 2 + ((rnd(st) * 2) | 0), price: off(crops[TIER[a]].price) }, { k: TIER[b], n: 1, price: off(crops[TIER[b]].price) });
+  }
+}
+function marketTick(st, crops) {
+  const m = st.mkt;
+  if (m.left > 0) { if ((m.left -= DT) <= 0) { m.left = 0; m.next = MARKET_GAP; m.wares = []; m.hot = -1; } }
+  else if ((m.next -= DT) <= 0) openMarket(st, crops);
+}
+const sale = (st, k) => (st.mkt.left > 0 && k === st.mkt.hot ? 3 : 1);
+
+function step(st, crops) {
+  st.t += DT;
+  const per = Math.floor((st.t + st.off) / RESTOCK);
+  if (per !== st.per) {
+    st.per = per;
+    st.stock = crops.map((c) => { const r = RARITIES[c.rarity], q = c.qty || r.qty; return rnd(st) < r.chance ? q[0] + Math.floor(rnd(st) * (q[1] - q[0] + 1)) : 0; });
+    st.stock[0] = Math.max(st.stock[0], 5); st.stock[1] = Math.max(st.stock[1], 1);
+  }
+  if (!st.gift && st.t >= 70) { st.gift = true; for (let i = 0; i < 3; i++) plantSeed(st, 0); } // tutorial reward
+  if (st.t >= 70) marketTick(st, crops);
+  // weather: a spell of rain, snow or storm every four to seven minutes
+  const w = st.w;
+  if (w.type) { if ((w.left -= DT) <= 0) { w.type = null; w.next = 240 + rnd(st) * 180; } }
+  else if ((w.next -= DT) <= 0) { const r = rnd(st); w.type = r < 0.5 ? 'rain' : r < 0.8 ? 'snow' : 'storm'; w.left = 70 + rnd(st) * 40; }
+  const fast = w.type === 'rain' || w.type === 'storm' ? 1.5 : 1, pm = 1 - Math.exp(-DT / 45);
+  for (let i = st.plants.length - 1; i >= 0; i--) {
+    const pl = st.plants[i], c = crops[pl.k], sp = fast * (pl.boost ? 6 : 1) * DT;
+    if (w.type) for (const f of pl.fr) if (f && rnd(st) < pm) {
+      if (w.type === 'snow') f.env |= f.env & WET ? FROZEN : CHILLED; else f.env |= f.env & CHILLED ? FROZEN : WET;
+    }
+    if (!c.multi) {
+      if (!pl.fr.length) pl.fr.push(newFruit(st));
+      if ((pl.g += sp) >= c.grow) { const f = pl.fr[0]; st.money += c.value * f.s * f.s * f.g * envMult(f.env) * sale(st, pl.k); st.plants.splice(i, 1); }
+      continue;
+    }
+    if (pl.g < c.grow) { if ((pl.g += sp) >= c.grow) { pl.fr = new Array(c.n).fill(null); pl.cd = pl.fr.map((_, k) => k * 1.2); } continue; }
+    for (let k = 0; k < c.n; k++) {
+      const f = pl.fr[k];
+      if (!f) { if ((pl.cd[k] -= DT) <= 0) pl.fr[k] = newFruit(st, pl.spawned++ < c.n ? 0.45 : 0); continue; }
+      if ((f.p += sp / c.regrow) >= 1) { st.money += c.value * f.s * f.s * f.g * envMult(f.env) * sale(st, pl.k); pl.fr[k] = null; pl.cd[k] = 2 + rnd(st) * 2; }
+    }
+  }
+  if (w.type === 'storm' && (st.bolt -= DT) <= 0) {
+    st.bolt = 25 + rnd(st) * 15;
+    if (st.plants.length && rnd(st) < 0.85) for (const f of st.plants[(rnd(st) * st.plants.length) | 0].fr) if (f) f.env |= SHOCKED;
+  }
+  // shop: the best seed you can afford, from the seed shop or a cart, while there is room (or a weaker plant to dig up)
+  for (;;) {
+    let k = crops.length - 1, ware = null;
+    for (; k >= 0; k--) {
+      ware = st.mkt.wares.find((w) => w.k === k && w.n > 0 && st.money >= w.price) || null;
+      if (ware || (st.stock[k] > 0 && st.money >= crops[k].price)) break;
+    }
+    if (k < 0) break;
+    if (st.plants.length >= MAX_PLANTS) {
+      let wi = -1, wk = k;
+      st.plants.forEach((p, i) => { if (p.k < wk) { wk = p.k; wi = i; } });
+      if (wi < 0) { if (ware) ware.n = 0; else st.stock[k] = 0; continue; }
+      st.plants.splice(wi, 1);
+    }
+    if (ware) { st.money -= ware.price; ware.n--; } else { st.money -= crops[k].price; st.stock[k]--; }
+    plantSeed(st, k);
+    if (st.first[k] === Infinity) st.first[k] = st.t;
+  }
+}
+// run until seed k has been bought (or the clock runs out)
+function until(st, crops, k, limit) { while (st.first[k] === Infinity && st.t < limit) step(st, crops); return st; }
+const clone = (st) => structuredClone(st);
+const median = (a) => { const b = [...a].sort((x, y) => x - y); return b[b.length >> 1]; };
+const mins = (s) => (s / 60).toFixed(1).padStart(6);
+
+const args = process.argv.slice(2), tune = args.includes('--tune'), runs = +(args.find((a) => /^\d+$/.test(a)) || (tune ? 48 : 200));
+const crops = CROPS.map((c) => ({ ...c }));
+if (tune) {
+  // Each crop earns back its own price at a set pace, slower the rarer it is (a strawberry plant in a minute and a half of
+  // fruiting, a beanstalk in under five hours); one-harvest crops sell for a little more than their seed. Then, seed by
+  // seed, freeze every run at the moment seed k is first bought and search the price of seed k+1 so the median
+  // wait for it matches the target (nothing before that moment depends on seed k+1).
+  const PAYBACK = { strawberry: 1.5, blueberry: 3, tomato: 20, corn: 32, apple: 55, coconut: 80, dragonfruit: 115, mango: 160, grape: 210, beanstalk: 280 };
+  // the first rungs are set by hand in src/data.js, Grow a Garden style: each crop earns more than the one before it
+  const HAND = Object.fromEntries(['strawberry', 'blueberry'].map((id) => [id, CROPS.find((c) => c.id === id)]));
+  const ROI = { carrot: 1.5, tulip: 1.2, watermelon: 1.15, pumpkin: 1.12, mushroom: 1.1 };
+  const nice = (x) => { const p = 10 ** Math.max(0, Math.floor(Math.log10(x)) - 1); return Math.round(x / p) * p; };
+  const setPrice = (c, price) => { c.price = nice(price); c.value = nice(c.multi ? (c.price * c.regrow) / (c.n * PAYBACK[c.id] * 60) : c.price * ROI[c.id]); };
+  setPrice(crops[0], 10);
+  for (const c of crops.slice(1)) { c.price = Infinity; c.value = 0; } // out of reach until their turn
+  let snaps = Array.from({ length: runs }, (_, i) => until(fresh(i * 7919 + 17), crops, 0, 0));
+  for (let k = 0; k < crops.length - 1; k++) {
+    const goal = TARGET[k] * 60, limit = (s) => s.t + goal * 8, next = crops[k + 1];
+    const gap = () => median(snaps.map((s0) => { const s = until(clone(s0), crops, k + 1, limit(s0)); return s.first[k + 1] - s0.t; }));
+    let lo = Math.log(crops[k].price * 1.5), hi = Math.log(crops[k].price * 2000);
+    if (HAND[next.id]) Object.assign(next, { price: HAND[next.id].price, value: HAND[next.id].value });
+    else {
+      for (let it = 0; it < 18; it++) { const mid = (lo + hi) / 2; setPrice(next, Math.exp(mid)); if (gap() < goal) lo = mid; else hi = mid; }
+      setPrice(next, Math.exp((lo + hi) / 2));
+    }
+    console.log(`${next.name.padEnd(14)} $${String(next.price).padEnd(10)} sells $${String(next.value).padEnd(9)} reached ${mins(gap())} min after ${crops[k].name} (target ${TARGET[k]})`);
+    snaps = snaps.map((s0) => until(clone(s0), crops, k + 1, limit(s0)));
+  }
+  console.log('\nprices:', JSON.stringify(Object.fromEntries(crops.map((c) => [c.id, c.price]))));
+  console.log('values:', JSON.stringify(Object.fromEntries(crops.map((c) => [c.id, c.value]))));
+} else {
+  const all = Array.from({ length: runs }, (_, i) => until(fresh(i * 104729 + 3), crops, crops.length - 1, 60 * 60 * 60).first);
+  console.log(`${runs} players, minutes from a fresh start (median, and the middle half of players):\n`);
+  let prev = 0;
+  crops.forEach((c, k) => {
+    const ts = all.map((f) => f[k]).filter(Number.isFinite), m = median(ts), q = (p) => [...ts].sort((a, b) => a - b)[Math.floor(ts.length * p)];
+    console.log(`${c.name.padEnd(14)} $${String(c.price).padEnd(10)} ${mins(m)}  (${mins(q(0.25)).trim()}-${mins(q(0.75)).trim()})  +${(((m - prev) / 60).toFixed(1))}`);
+    prev = m;
+  });
+}

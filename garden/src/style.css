@@ -9,7 +9,7 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: #ffffff; overscroll-behavior: none; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #8fd4ff; overscroll-behavior: none; }
 body { font: 700 14px/1.25 var(--body); color: var(--text); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
 #app { position: fixed; inset: 0; overflow: hidden; overflow: clip; }

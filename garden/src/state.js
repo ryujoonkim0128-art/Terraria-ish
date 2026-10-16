@@ -7,23 +7,22 @@ const subs = {};
 export const on = (e, f) => (subs[e] ||= []).push(f);
 export const emit = (e, d) => (subs[e] || []).forEach((f) => f(d));
 
-const KEY = 'voxel-garden-save-v1';
+const KEY = 'voxel-garden-save-v2';
 export function fresh() {
   return {
-    v: 1, tv: 2, seed: (Math.random() * 1e9) | 0,
+    v: 2, seed: (Math.random() * 1e9) | 0,
     money: 20, seeds: { carrot: 5 }, bag: [], plants: [], nextId: 1,
     time: DAY_LEN * 0.1, weather: { type: 'clear', left: 0 }, nextWeather: 200,
     bought: { p: -1, c: {} }, tut: 0, sel: 'seed:carrot',  // tut 7 = tutorial finished
     stats: { harvested: 0, earned: 0, planted: 0, best: 0 },
-    mkt: { next: 150, left: 0, hot: null, wares: null },  // Market Day: seconds until it opens, seconds left while open
+    mkt: { next: 420, left: 0, hot: null, wares: null },  // Market Day: seconds until it opens, seconds left while open
     sound: true, music: true, saved: Date.now(),
   };
 }
 export function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { d = null; }
-  if (!d || d.v !== 1 || !Array.isArray(d.plants)) { G = fresh(); return 0; }
-  if (!d.tv) { d.tut = d.tut >= 6 ? 7 : 0; d.tv = 2; } // the tutorial was rebuilt: finished stays finished
+  if (!d || d.v !== 2 || !Array.isArray(d.plants)) { G = fresh(); return 0; }
   G = Object.assign(fresh(), d);
   return Math.max(0, Math.min(8 * 3600, (Date.now() - (d.saved || Date.now())) / 1000));
 }
@@ -39,7 +38,7 @@ export function stock() {
   const p = period();
   if (stockCache.p !== p || stockCache.seed !== G.seed) {
     const R = rng(hash(p, 17, G.seed)), s = {};
-    for (const c of CROPS) { const r = RARITIES[c.rarity]; if (R() < r.chance) s[c.id] = r.qty[0] + Math.floor(R() * (r.qty[1] - r.qty[0] + 1)); }
+    for (const c of CROPS) { const r = RARITIES[c.rarity], q = c.qty || r.qty; if (R() < r.chance) s[c.id] = q[0] + Math.floor(R() * (q[1] - q[0] + 1)); }
     s.carrot = Math.max(s.carrot || 0, 5); s.strawberry = Math.max(s.strawberry || 0, 1);
     Object.assign(stockCache, { p, seed: G.seed, s });
   }
@@ -71,8 +70,8 @@ export function newFruit(p = 0) {
   let size = 0.85 + Math.random() * 0.35;
   if (Math.random() < 0.04) size *= 1.4 + Math.random() * 0.8;
   const m = [];
-  if (Math.random() < 0.0025) m.push('rainbow');
-  else if (Math.random() < 0.012) m.push('gold');
+  if (Math.random() < 0.001) m.push('rainbow');
+  else if (Math.random() < 0.006) m.push('gold');
   return { p, s: +size.toFixed(3), m };
 }
 

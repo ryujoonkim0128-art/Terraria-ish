@@ -57,14 +57,14 @@ check('title gone, goal + hand + teleports shown, carrot seeds in hand', s.goal 
 await shot('1_plant');
 
 // ---- plant: tap the soil
-await tapAt(await scr(6, 21));
+await tapAt(await scr(6, 25));
 s = await G(() => ({ n: window.game.G.plants.length, seeds: window.game.G.seeds.carrot }));
 check('tap the soil plants a seed', s.n === 1 && s.seeds === 4, s);
-await tapAt(await scr(6.5, 21.3));
+await tapAt(await scr(6.5, 25.3));
 check('too close to another plant is refused', (await G(() => window.game.G.plants.length)) === 1);
-await tapAt(await scr(-9, 42, 1));
+await tapAt(await scr(-9, 46, 1));
 check('grass outside the garden is refused', (await G(() => window.game.G.plants.length)) === 1);
-for (const [x, z] of [[11, 19], [6, 16], [11, 14], [16, 17]]) await tapAt(await scr(x, z));
+for (const [x, z] of [[11, 23], [6, 20], [11, 18], [16, 21]]) await tapAt(await scr(x, z));
 await tick();
 s = await G(() => ({ n: window.game.G.plants.length, tut: window.game.G.tut, sel: window.game.G.sel }));
 check('five carrots planted, tutorial moves on, hand empties', s.n === 5 && s.tut === 1 && s.sel === null, s);
@@ -78,8 +78,8 @@ check('far from the crops the hand teaches the joystick', s.hand === 'drag' && s
 
 // ---- walk over with the joystick
 const p0 = await player();
-const p1 = await walkTo(10, 18, 3);
-check('joystick walks the farmer to the crops', Math.hypot(p1.x - 10, p1.z - 18) <= 3.5 && Math.hypot(p1.x - p0.x, p1.z - p0.z) > 10, { p0, p1 });
+const p1 = await walkTo(10, 22, 3);
+check('joystick walks the farmer to the crops', Math.hypot(p1.x - 10, p1.z - 22) <= 3.5 && Math.hypot(p1.x - p0.x, p1.z - p0.z) > 10, { p0, p1 });
 await tick();
 s = await G(() => ({ act: !document.querySelector('#act').hidden, prompt: !document.querySelector('#prompt').hidden, lbl: document.querySelector('#act .lbl').textContent, sub: document.querySelector('#prompt small').textContent }));
 check('Collect button and prompt pop up next to ripe crops', s.act && s.prompt && s.lbl === 'Collect' && /Carrot/.test(s.sub), s);
@@ -130,7 +130,7 @@ await page.click('[data-tp="garden"]');
 await page.waitForTimeout(700);
 await tick();
 s = await G(() => ({ tut: window.game.G.tut, seeds: window.game.G.seeds, open: document.querySelector('#sheet').classList.contains('open'), d: window.game.World.distTo(window.game.World.HOME.x, window.game.World.HOME.z) }));
-check('Garden teleport goes home and unlocks the garden', s.tut === 6 && s.seeds.strawberry === 2 && !s.open && s.d < 2, s);
+check('Garden teleport goes home and unlocks the garden, with 3 carrot seeds', s.tut === 6 && s.seeds.carrot === 4 && !s.open && s.d < 2, s);
 await shot('8_home', 200);
 await G(() => { for (let i = 0; i < 6; i++) window.game.UI.update(0.5); });
 s = await G(() => ({ tut: window.game.G.tut, goal: document.querySelector('#goal').hidden, hand: document.querySelector('#hand').hidden }));
@@ -170,12 +170,13 @@ check('dragging the right side turns the camera', Math.abs(yaw1 - yaw0) > 0.3, {
 await G(() => window.game.World.teleport(window.game.World.HOME));
 
 // ---- shovel
+await G(() => { window.game.G.seeds.strawberry = 2; window.game.UI.renderHotbar(); });
 await page.click('#hotbar [data-id="seed:strawberry"]');
-await tapAt(await scr(-10, 14));
+await tapAt(await scr(-10, 18));
 s = await G(() => window.game.G.plants.length);
 check('strawberry planted from the hotbar', s === 1, s);
 await page.click('#hotbar [data-id="shovel"]');
-await tapAt(await scr(-10, 14, 3));
+await tapAt(await scr(-10, 18, 3));
 check('shovel digs a cheap plant', (await G(() => window.game.G.plants.length)) === 0);
 
 // ---- Market Day: a chip counts down, the carts sell rare seeds at a discount, one crop sells for triple
@@ -207,7 +208,7 @@ await G(() => window.game.World.teleport(window.game.World.HOME));
 
 // ---- rain mutations
 await G(() => { window.game.G.seeds.strawberry = 1; window.game.G.sel = 'seed:strawberry'; });
-await tapAt(await scr(-4, 18));
+await tapAt(await scr(-4, 22));
 await grow(80);
 await G(() => { window.game.G.weather = { type: 'rain', left: 300 }; });
 await grow(90);

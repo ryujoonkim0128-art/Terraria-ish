@@ -1,6 +1,6 @@
 // DOM UI and controls: joystick + camera drag, tap to plant, Collect prompts, teleport buttons,
 // shop sheets, toasts, and the wordless tutorial.
-import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, inBed, plural } from './data.js';
+import { CROPS, CROP, RARITIES, MUTS, MUT_ORDER, WEATHER, BASKET, BED, inBed, plural } from './data.js';
 import { G, on, plant, collect, sell, buySeed, buyWare, dig, inStock, restockIn, period, ripeCount, totalRipe, bagValue, sellValue, marketOpen, itemKey, placeBlock, reset, save } from './state.js';
 import { speed, isNight, bloodMoon } from './sim.js';
 import * as Wd from './world.js';
@@ -466,8 +466,8 @@ const STEPS = [
   { text: 'Growing', icon: 'carrot', bar: true },
   { text: 'Collect', icon: 'carrot', target: 5, count: () => Math.min(5, G.stats.harvested) },
   { text: 'Sell', icon: 'carrot' },
-  { text: 'Buy seeds', icon: 'strawberry' },
-  { text: 'Go home', icon: 'strawberry' },
+  { text: 'Buy seeds', icon: 'carrot' },
+  { text: 'Go home', icon: 'carrot' },
 ];
 let lastStep = -1, rewardT = 0;
 function tutorial(dt) {
@@ -477,8 +477,8 @@ function tutorial(dt) {
   if (G.tut === 2 && (G.stats.harvested >= 5 || (G.bag.length && !G.plants.length))) G.tut = 3;
   if (G.tut === 3 && G.stats.earned > 0) G.tut = 4;
   if (G.tut === 4 && CROPS.some((c) => G.bought.c[c.id])) G.tut = 5;
-  if (G.tut === 5 && !sheetKind && Wd.distTo(Wd.HOME.x, Wd.HOME.z) < 12) { G.tut = 6; rewardT = 2.4; G.seeds.strawberry = (G.seeds.strawberry || 0) + 2; renderHotbar(); celebrate('Garden unlocked!'); }
-  if (G.tut === 6) { ui.hand.hidden = true; Wd.setGuide(null); if ((rewardT -= dt) <= 0) { G.tut = 7; toast('You got 2 Strawberry seeds. Have fun!'); } return; }
+  if (G.tut === 5 && !sheetKind && Wd.distTo(Wd.HOME.x, Wd.HOME.z) < 12) { G.tut = 6; rewardT = 2.4; G.seeds.carrot = (G.seeds.carrot || 0) + 3; renderHotbar(); celebrate('Garden unlocked!'); }
+  if (G.tut === 6) { ui.hand.hidden = true; Wd.setGuide(null); if ((rewardT -= dt) <= 0) { G.tut = 7; toast('You got 3 Carrot seeds. Have fun!'); } return; }
   const st = STEPS[G.tut];
   if (G.tut !== lastStep) {
     if (lastStep >= 0) celebrate();
@@ -537,7 +537,10 @@ let spotCache = null;
 function suggestSpot() {
   if (spotCache && !placeBlock('carrot', spotCache.x, spotCache.z)) return spotCache;
   // a row just in front of the farmer, a little to the right so the hand never covers them
-  for (const [x, z] of [[6, 21], [11, 19], [6, 16], [11, 14], [16, 17], [1, 17], [16, 12], [1, 12], [6, 11], [11, 9]]) if (!placeBlock('carrot', x, z)) return (spotCache = { x, z });
+  for (const [x, dz] of [[6, 9], [11, 11], [6, 14], [11, 16], [16, 13], [1, 13], [16, 18], [1, 18], [6, 19], [11, 21]]) {
+    const z = BED.z1 - dz;
+    if (!placeBlock('carrot', x, z)) return (spotCache = { x, z });
+  }
   return null;
 }
 function celebrate(big) {

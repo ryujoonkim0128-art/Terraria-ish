@@ -1,5 +1,5 @@
 // Time passing: growth, fruiting, weather, day and night, and weather mutations.
-import { CROPS, CROP, WEATHER, DAY_LEN, NIGHT_START, NIGHT_END } from './data.js';
+import { CROPS, CROP, WEATHER, DAY_LEN, NIGHT_START, NIGHT_END, MARKET_LEN, MARKET_GAP, POOLS } from './data.js';
 import { G, emit, newFruit } from './state.js';
 import { hash } from './voxel.js';
 
@@ -17,9 +17,7 @@ function addMut(f, m, pl) {
   emit('mut', { pl, f, m });
 }
 
-// ---------- Market Day: every twelve minutes two pop-up carts open on the plaza for four
-export const MARKET_LEN = 240, MARKET_GAP = 720;
-const POOLS = { veg: ['tulip', 'tomato', 'corn', 'watermelon', 'pumpkin', 'mushroom', 'beanstalk'], berry: ['blueberry', 'apple', 'coconut', 'dragonfruit', 'mango', 'grape'] };
+// ---------- Market Day (see data.js)
 const tier = (id) => CROPS.findIndex((c) => c.id === id);
 function pickHot() {
   const grown = [...G.plants.map((p) => p.c), ...G.bag.map((it) => it.c)];
@@ -52,17 +50,17 @@ function marketTick(dt) {
   }
 }
 
-let boltIn = 5, moonIn = 8;
+let boltIn = 20, moonIn = 8;
 export function update(dt, offline = false) {
   G.time += dt;
   if (!offline) {
     marketTick(dt);
     const w = G.weather;
     if (w.type !== 'clear') {
-      if ((w.left -= dt) <= 0) { w.type = 'clear'; G.nextWeather = 160 + Math.random() * 120; emit('weather', 'clear'); }
+      if ((w.left -= dt) <= 0) { w.type = 'clear'; G.nextWeather = 240 + Math.random() * 180; emit('weather', 'clear'); }
     } else if (G.tut >= 7 && (G.nextWeather -= dt) <= 0) {
       const r = Math.random();
-      w.type = r < 0.45 ? 'rain' : r < 0.72 ? 'snow' : 'storm';
+      w.type = r < 0.5 ? 'rain' : r < 0.8 ? 'snow' : 'storm';
       w.left = 70 + Math.random() * 40;
       emit('weather', w.type);
     }
@@ -94,7 +92,7 @@ export function update(dt, offline = false) {
   if (wt === 'rain' || wt === 'storm') each((f, pl) => { if (roll(1 / 45, dt)) addMut(f, f.m.includes('chilled') ? 'frozen' : 'wet', pl); });
   if (wt === 'snow') each((f, pl) => { if (roll(1 / 45, dt)) addMut(f, f.m.includes('wet') ? 'frozen' : 'chilled', pl); });
   if (wt === 'storm' && (boltIn -= dt) <= 0) {
-    boltIn = 5 + Math.random() * 7;
+    boltIn = 25 + Math.random() * 15;
     const pl = G.plants.length && Math.random() < 0.85 ? G.plants[(Math.random() * G.plants.length) | 0] : null;
     emit('lightning', pl ? { x: pl.x, z: pl.z, pl } : { x: (Math.random() - 0.5) * 50, z: (Math.random() - 0.5) * 50 });
     if (pl) pl.fr.forEach((f) => f && addMut(f, 'shocked', pl));

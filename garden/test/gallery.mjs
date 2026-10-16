@@ -32,7 +32,7 @@ await p.evaluate(() => {
   G.plants.forEach((pl, i) => pl.fr.forEach((f, k) => { if (f && k === 0 && i % 3 === 0) f.m = [['gold', 'rainbow', 'frozen', 'shocked', 'wet', 'moonlit'][i % 6]]; }));
   G.time = 600 * 0.3; G.weather = { type: 'clear', left: 0 };
   // pull the camera back over the whole garden
-  World.teleport({ x: 0, z: 31 });
+  World.teleport({ x: 0, z: World.HOME.z - 4 });
   Object.assign(World.camState, { dist: 74, pitch: 0.95, lead: 26 });
   World.snapCamera(0);
   document.querySelectorAll('.toast').forEach((t) => t.remove());

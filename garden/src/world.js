@@ -16,7 +16,7 @@ export const SHOPS = {
   seeds: { x: -14, z: -72, spot: { x: -14, z: -58 }, name: 'Seeds' },
   sell: { x: 14, z: -72, spot: { x: 14, z: -58 }, name: 'Sell' },
 };
-export const HOME = { x: 0, z: 35 };
+export const HOME = { x: 0, z: BED.z1 + 9 };
 const PLAZA = { x0: -40, x1: 40, z0: -92, z1: -50 };
 // Market Day: two pop-up carts beside the stalls and a maypole in the middle of the plaza
 export const CARTS = { veg: { x: -31, z: -71 }, berry: { x: 31, z: -71 } };
@@ -44,8 +44,8 @@ export function init(host) {
   W.renderer = renderer;
   host.appendChild(renderer.domElement);
   scene = new T.Scene();
-  scene.fog = new T.Fog(0xffffff, 110, 230);
-  cam = new T.PerspectiveCamera(62, 1, 0.5, 260);
+  scene.fog = new T.Fog(0xc8ecff, 80, 175);
+  cam = new T.PerspectiveCamera(62, 1, 0.5, 240);
   hemi = new T.HemisphereLight(0xffffff, 0x6a8a5a, 0.75); scene.add(hemi);
   sun = new T.DirectionalLight(0xfff2dc, 1.05);
   sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0012; sun.shadow.normalBias = 0.03;
@@ -84,14 +84,43 @@ export function init(host) {
 // The flat ground is one big square with a texel per voxel; only blocks that stick up are meshed.
 const GROUND = 256;
 const onGround = (x, y) => y <= 0;
-const tiled = (x, z) => (x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1) || (Math.abs(x) <= 3 && z > PLAZA.z1 && z < -26);
+const tiled = (x, z) => (x >= PLAZA.x0 && x <= PLAZA.x1 && z >= PLAZA.z0 && z <= PLAZA.z1) || (Math.abs(x) <= 3 && z > PLAZA.z1 && z < BED.z0 - 1);
+// the grass repeats every 64 cells, so the endless lawn past the painted square matches it exactly
+const GRASS = 64;
+function grass(x, z) {
+  x &= GRASS - 1; z &= GRASS - 1;
+  const h = hash(x, z, 1);
+  return shade(h < 0.05 ? '#5aae58' : h > 0.97 ? '#8ad87a' : '#78cc6c', 1 + (hash(x, z, 11) - 0.5) * 0.12);
+}
 function groundColor(x, z) {
   if (tiled(x, z)) {
     const plaza = x >= PLAZA.x0 && x <= PLAZA.x1, tile = plaza && z <= PLAZA.z1 ? ((Math.floor(x / 3) + Math.floor(z / 3)) & 1) : ((x + z) & 1);
     return shade(hash(x, z) < 0.08 ? '#c8ae86' : tile ? '#ead6b0' : '#e0c9a0', 1 + (hash(x, z, 11) - 0.5) * 0.06);
   }
   if (onAnyBed(x, z)) return hex('#6a4228');
-  return 0xffffff;
+  return grass(x, z);
+}
+// paint an n-by-n canvas texture, one texel per cell, starting at cell (x0, z0)
+function paint(n, x0, z0, colorAt, dark = null) {
+  const c = document.createElement('canvas');
+  c.width = c.height = n;
+  const g = c.getContext('2d'), img = g.createImageData(n, n), d = img.data;
+  for (let pz = 0; pz < n; pz++) for (let px = 0; px < n; px++) {
+    const col = colorAt(px + x0, pz + z0), k = dark ? dark[pz * n + px] : 1, i = (pz * n + px) * 4;
+    d[i] = (col >> 16) * k; d[i + 1] = ((col >> 8) & 255) * k; d[i + 2] = (col & 255) * k; d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new T.CanvasTexture(c);
+  // crisp squares up close, smooth far away (no anisotropy: it blurs nearest filtering on many GPUs)
+  tex.encoding = T.sRGBEncoding; tex.magFilter = T.NearestFilter; tex.minFilter = T.LinearMipmapLinearFilter;
+  return tex;
+}
+function floor(size, tex, y) {
+  const geo = new T.PlaneGeometry(size, size);
+  geo.rotateX(-Math.PI / 2); geo.translate(-0.5, y, -0.5);
+  const m = new T.Mesh(geo, new T.MeshLambertMaterial({ map: tex }));
+  m.receiveShadow = true; scene.add(m);
+  return geo;
 }
 function buildTerrain() {
   const V = new Vox(rng(12));
@@ -107,46 +136,39 @@ function buildTerrain() {
   for (let x = PLAZA.x0 - 1; x <= PLAZA.x1 + 1; x++) for (const z of [PLAZA.z0 - 1, PLAZA.z1 + 1]) if (Math.abs(x) > 3 || z === PLAZA.z0 - 1) V.set(x, 1, z, '#c8b48a', 0.03);
   for (let z = PLAZA.z0; z <= PLAZA.z1; z++) for (const x of [PLAZA.x0 - 1, PLAZA.x1 + 1]) V.set(x, 1, z, '#c8b48a', 0.03);
   // paint the floor, with a soft contact shadow around everything that sticks up
-  const N = GROUND, H = N / 2, c = document.createElement('canvas');
-  c.width = c.height = N;
-  const g = c.getContext('2d'), img = g.createImageData(N, N), d = img.data, dark = new Float32Array(N * N).fill(1);
+  const N = GROUND, H = N / 2, dark = new Float32Array(N * N).fill(1);
   for (const [x, , z] of V.m.values()) for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
     const i = (z + dz + H) * N + (x + dx + H);
-    if (i >= 0 && i < N * N) dark[i] = Math.min(dark[i], dx && dz ? 0.93 : 0.86);
+    if (i >= 0 && i < N * N) dark[i] = Math.min(dark[i], dx && dz ? 0.9 : 0.8);
   }
-  for (let pz = 0; pz < N; pz++) for (let px = 0; px < N; px++) {
-    const col = groundColor(px - H, pz - H), k = dark[pz * N + px], i = (pz * N + px) * 4;
-    d[i] = (col >> 16) * k; d[i + 1] = ((col >> 8) & 255) * k; d[i + 2] = (col & 255) * k; d[i + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  const tex = new T.CanvasTexture(c);
-  // crisp squares up close, smooth far away (no anisotropy: it blurs nearest filtering on many GPUs)
-  tex.encoding = T.sRGBEncoding; tex.magFilter = T.NearestFilter; tex.minFilter = T.LinearMipmapLinearFilter;
-  // one big square floor, a texel per cell in the middle; past the texture's white edge it stays white
-  const geo = new T.PlaneGeometry(1024, 1024);
-  geo.rotateX(-Math.PI / 2); geo.translate(-0.5, 1, -0.5);
-  const pos = geo.attributes.position, uv = geo.attributes.uv;
-  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + H + 0.5) / N, 1 - (pos.getZ(i) + H + 0.5) / N);
-  const ground = new T.Mesh(geo, new T.MeshLambertMaterial({ map: tex }));
-  ground.receiveShadow = true;
-  scene.add(ground);
+  floor(N, paint(N, -H, -H, groundColor, dark), 1);
+  // and an endless lawn just beneath it, the same grass tiled out to the horizon
+  const lawn = paint(GRASS, 0, 0, grass), L = 1024;
+  lawn.wrapS = lawn.wrapT = T.RepeatWrapping;
+  const geo = floor(L, lawn, 0.97), pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + 0.5) / GRASS, 1 - (pos.getZ(i) + 0.5) / GRASS);
   for (const geo2 of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo2, mats.vox); m.receiveShadow = true; scene.add(m); }
 }
 
 function buildProps() {
   const V = new Vox(rng(77));
   // lamps along the path, round the plaza and at the front corners of your garden
-  const lamps = [[-7, -30], [PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [BED.x0 - 4, BED.z1 + 4], [BED.x1 + 4, BED.z1 + 4]];
+  const lamps = [[-7, BED.z0 - 10], [PLAZA.x0 + 2, PLAZA.z1 - 2], [PLAZA.x1 - 2, PLAZA.z1 - 2], [PLAZA.x0 + 2, PLAZA.z0 + 2], [PLAZA.x1 - 2, PLAZA.z0 + 2], [BED.x0 - 4, BED.z1 + 4], [BED.x1 + 4, BED.z1 + 4]];
   for (const [x, z] of lamps) { M.drawLamp(V, x, 1, z); colliders.push({ x, z, r: 0.8 }); addGlow(x, 10.5, z, 0xffd27a, 16); addLampHead(x, 9.5, z); }
   // plaza dressing
   for (const [x, z] of [[-30, -60], [30, -60], [-30, -82], [30, -82]]) { M.drawFlowerbed(V, x, 1, z, 5); colliders.push({ x0: x - 5.5, x1: x + 5.5, z0: z - 1.5, z1: z + 1.5 }); }
   for (const [x, z] of [[-22, -54], [22, -54]]) { M.drawBench(V, x, 1, z); colliders.push({ x0: x - 2.5, x1: x + 2.5, z0: z - 0.5, z1: z + 1.5 }); }
   M.drawFlowerbed(V, 0, 1, -86, 8);
   colliders.push({ x0: -8.5, x1: 8.5, z0: -87.5, z1: -84.5 });
-  // signpost
-  V.box(-16, 1, 32, -16, 4, 32, '#8a5a3a', 0.03); V.box(-10, 1, 32, -10, 4, 32, '#8a5a3a', 0.03);
+  // two signboards either side of the way into your garden, read together: YOUR GARDEN / GROWS EVEN WHILE OFFLINE
+  const z = BED.z1 + 6;
+  for (const [x0, x1] of [[-11, -5], [5, 12]]) {
+    V.box(x0, 1, z, x0, 4, z, '#8a5a3a', 0.03); V.box(x1, 1, z, x1, 4, z, '#8a5a3a', 0.03);
+    colliders.push({ x0: x0 - 1, x1: x1 + 1, z0: z - 0.6, z1: z + 0.6 });
+  }
   for (const geo of chunks(V, 48, { solid: onGround })) { const m = new T.Mesh(geo, mats.vox); m.castShadow = true; m.receiveShadow = true; scene.add(m); }
-  sign('YOUR GARDEN', -12.5, 5.6, 32.6, 8, '#c8904a');
+  sign('YOUR GARDEN', -8, 5.6, z + 0.6, 8, '#c8904a');
+  sign(['GROWS EVEN', 'WHILE OFFLINE'], 8.5, 6.3, z + 0.6, 9, '#5aa848', scene, 3.4);
 }
 function addLampHead(x, y, z) {
   const l = new T.Mesh(M.lanternGeo(), mats.basic);
@@ -156,27 +178,32 @@ function addGlow(x, y, z, col, s) {
   const g = new T.Sprite(new T.SpriteMaterial({ map: glowTex(), color: col, transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
   g.position.set(x + 0.5, y, z + 0.5); g.scale.set(s, s, 1); scene.add(g); lanternGlows.push(g);
 }
-function textTexture(str, bg, w = 512, h = 128) {
+// white lettering on a coloured board: one line, or an array of lines sharing one size
+function textTexture(text, bg, w = 512, h = 128) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d');
   const tex = new T.CanvasTexture(c); tex.encoding = T.sRGBEncoding;
+  const lines = [].concat(text), lh = h / lines.length;
   const draw = () => {
     g.fillStyle = bg; g.fillRect(0, 0, w, h);
-    g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, h - h / 12, w, h / 12);
-    let size = Math.round(h * 0.6); g.font = `${size}px Bungee, "Arial Black", sans-serif`;
-    while (g.measureText(str).width > w * 0.9 && size > 12) { size -= 2; g.font = `${size}px Bungee, "Arial Black", sans-serif`; }
+    g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, h - lh / 12, w, lh / 12);
+    let size = Math.round(lh * 0.6); g.font = `${size}px Bungee, "Arial Black", sans-serif`;
+    while (lines.some((l) => g.measureText(l).width > w * 0.9) && size > 12) { size -= 2; g.font = `${size}px Bungee, "Arial Black", sans-serif`; }
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillText(str, w / 2 + h / 32, h / 2 + h / 20); g.fillStyle = '#fff'; g.fillText(str, w / 2, h / 2 + h / 64);
+    lines.forEach((l, i) => {
+      const y = (i + 0.5) * lh;
+      g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillText(l, w / 2 + lh / 32, y + lh / 20); g.fillStyle = '#fff'; g.fillText(l, w / 2, y + lh / 64);
+    });
     tex.needsUpdate = true;
   };
   draw();
   if (document.fonts) document.fonts.ready.then(draw);
   return tex;
 }
-function sign(str, x, y, z, w, bg, parent = scene) {
-  const board = new T.Mesh(new T.BoxGeometry(w, w / 4, 0.6), new T.MeshLambertMaterial({ color: 0x8a5a3a }));
+function sign(text, x, y, z, w, bg, parent = scene, h = w / 4) {
+  const board = new T.Mesh(new T.BoxGeometry(w, h, 0.6), new T.MeshLambertMaterial({ color: 0x8a5a3a }));
   board.position.set(x, y, z - 0.35); board.castShadow = true; parent.add(board);
-  const face = new T.Mesh(new T.PlaneGeometry(w - 0.4, w / 4 - 0.4), new T.MeshLambertMaterial({ map: textTexture(str, bg) }));
+  const face = new T.Mesh(new T.PlaneGeometry(w - 0.4, h - 0.4), new T.MeshLambertMaterial({ map: textTexture(text, bg, 512, Math.round((512 * (h - 0.4)) / (w - 0.4))) }));
   face.position.set(x, y, z - 0.03); parent.add(face);
 }
 function buildShops() {
@@ -387,8 +414,7 @@ export function setGuide(g) { guide = g; }
 
 // ---------------------------------------------------------------- sky and light
 const KEYS = [[0, '#f4b0a0', 0.55, '#a8b8e8', 0.5], [0.07, '#fff2dc', 1.05, '#e8f4ff', 0.75], [0.6, '#fff0d8', 1.0, '#eaf2ff', 0.72], [0.66, '#ffb070', 0.8, '#ffd0b0', 0.6], [0.73, '#7080d8', 0.32, '#5060a0', 0.38], [0.93, '#7080d8', 0.32, '#5060a0', 0.38], [0.98, '#ffb8a0', 0.55, '#a890c0', 0.5], [1, '#f4b0a0', 0.55, '#a8b8e8', 0.5]];
-// a plain white backdrop that only warms at dawn and dusk and cools a little at night
-const SKY = [[0, '#fff2ea', '#fff6f0'], [0.07, '#ffffff', '#ffffff'], [0.58, '#ffffff', '#ffffff'], [0.65, '#fff0e4', '#fff5ec'], [0.73, '#e6e8f2', '#eceef5'], [0.93, '#e6e8f2', '#eceef5'], [0.975, '#f4ecf2', '#f8f1f4'], [1, '#fff2ea', '#fff6f0']];
+const SKY = [[0, '#6878c8', '#f4c0a8'], [0.07, '#4aa8f4', '#d4f0ff'], [0.58, '#4aa0f4', '#cdeeff'], [0.65, '#5a60b8', '#ffb08a'], [0.73, '#0e1236', '#2a3070'], [0.93, '#0e1236', '#2a3070'], [0.975, '#3a3a80', '#c08aa0'], [1, '#6878c8', '#f4c0a8']];
 const ca = new T.Color(), cb = new T.Color(), cTop = new T.Color(), cBot = new T.Color();
 function key(keys, d) {
   for (let k = 0; k < keys.length - 1; k++) if (d >= keys[k][0] && d <= keys[k + 1][0]) return [keys[k], keys[k + 1], (d - keys[k][0]) / (keys[k + 1][0] - keys[k][0])];
@@ -396,22 +422,41 @@ function key(keys, d) {
 }
 const lerpCol = (a, b, t, out) => out.set(a).lerp(cb.set(b), t);
 function nightAmount(d) { if (d < 0.6) return 0; if (d < 0.74) return (d - 0.6) / 0.14; if (d < 0.93) return 1; return Math.max(0, 1 - (d - 0.93) / 0.07); }
-let skyKey = '';
+let skyKey = '', skyT = 0;
 function drawSky(d, dt) {
   const [a, b, t] = key(SKY, d);
   lerpCol(a[1], b[1], t, cTop); lerpCol(a[2], b[2], t, cBot);
   const gray = env.rain * 0.7, sn = env.snow * 0.5;
-  cTop.lerp(ca.set(env.storm > 0.3 ? '#c4c8d4' : '#e0e4ea'), gray).lerp(ca.set('#f4f7fb'), sn);
-  cBot.lerp(ca.set(env.storm > 0.3 ? '#cdd0da' : '#e6e9ee'), gray).lerp(ca.set('#f8fafc'), sn);
-  if (bloodMoon()) { cTop.lerp(ca.set('#f4dce2'), env.night * 0.7); cBot.lerp(ca.set('#f6e2e6'), env.night * 0.6); }
+  cTop.lerp(ca.set(env.storm > 0.3 ? '#3a4058' : '#7a8aa8'), gray).lerp(ca.set('#a8b8d0'), sn);
+  cBot.lerp(ca.set(env.storm > 0.3 ? '#6a7088' : '#b8c4d4'), gray).lerp(ca.set('#e0e8f4'), sn);
+  if (bloodMoon()) { cTop.lerp(ca.set('#3a0a1a'), env.night * 0.7); cBot.lerp(ca.set('#a02a3a'), env.night * 0.6); }
   scene.fog.color.copy(cBot).convertSRGBToLinear();
-  const k = cTop.getHexString() + cBot.getHexString();
-  if (k === skyKey) return;
-  skyKey = k;
+  skyT += dt;
+  const k = cTop.getHexString() + cBot.getHexString() + Math.round(d * 400) + (env.flash > 0 ? env.flash.toFixed(2) : '');
+  if (k === skyKey && !(env.night > 0.05 && skyT > 0.12)) return;
+  skyKey = k; skyT = 0;
   const g = skyG, w = screen.w, h = screen.h;
   const gr = g.createLinearGradient(0, 0, 0, h * 0.5);
   gr.addColorStop(0, '#' + cTop.getHexString()); gr.addColorStop(1, '#' + cBot.getHexString());
   g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  if (env.night > 0.05) for (let s = 0; s < 70; s++) {
+    if (hash(s, 4) > env.night || Math.sin(W.t * (1 + hash(s, 3) * 3) + s) < 0.1) continue;
+    g.fillStyle = hash(s, 5) < 0.3 ? '#ffe8b0' : '#ffffff';
+    const z = hash(s, 6) < 0.15 ? 3 : 2;
+    g.fillRect(Math.floor(hash(s, 1) * w), Math.floor(hash(s, 2) * h * 0.35), z, z);
+  }
+  const arc = (u) => ({ x: w * 0.12 + u * w * 0.76, y: h * 0.2 - Math.sin(u * Math.PI) * h * 0.13 });
+  const body = (u, c, r, glowC) => {
+    const p = arc(u);
+    const gg = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 4); gg.addColorStop(0, glowC); gg.addColorStop(1, 'rgba(255,255,255,0)');
+    g.globalAlpha = 1 - env.rain * 0.8; g.fillStyle = gg; g.fillRect(p.x - r * 4, p.y - r * 4, r * 8, r * 8);
+    g.fillStyle = c; g.fillRect(Math.round(p.x - r), Math.round(p.y - r), r * 2, r * 2);
+    g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(Math.round(p.x - r), Math.round(p.y - r), r * 2, Math.round(r * 0.6));
+    g.globalAlpha = 1;
+  };
+  if (d < 0.7) body(Math.min(1, (d + 0.02) / 0.72), '#ffd84a', 14, 'rgba(255,240,180,0.55)');
+  if (d > 0.66 || d < 0.02) body(d > 0.66 ? (d - 0.66) / 0.34 : 1, bloodMoon() ? '#ff4a5a' : '#f2f0dc', 11, bloodMoon() ? 'rgba(255,60,80,0.4)' : 'rgba(200,210,255,0.4)');
+  if (env.flash > 0) { g.fillStyle = `rgba(255,255,255,${env.flash * 0.7})`; g.fillRect(0, 0, w, h); }
 }
 
 // ---------------------------------------------------------------- per frame
@@ -512,7 +557,7 @@ export function update(dt, input = { x: 0, y: 0 }) {
   lerpCol(a[1], b[1], tt, sun.color); sun.intensity = (a[2] + (b[2] - a[2]) * tt) * (1 - env.rain * 0.45 - env.storm * 0.25) + env.flash * 2;
   lerpCol(a[3], b[3], tt, hemi.color); hemi.intensity = (a[4] + (b[4] - a[4]) * tt) * (1 - env.rain * 0.15) + env.flash;
   if (bloodMoon()) { sun.color.lerp(ca.set('#ff5060'), env.night * 0.6); hemi.color.lerp(ca.set('#a04050'), env.night * 0.5); }
-  hemi.groundColor.set(env.night > 0.5 ? '#202840' : '#c8c8d0');
+  hemi.groundColor.set(env.night > 0.5 ? '#202840' : '#6a8a5a');
   drawSky(d, dt);
   const glowOn = Math.max(env.night, env.storm * 0.5);
   lanternGlows.forEach((gl) => { gl.material.opacity = glowOn * (0.8 + Math.sin(t * 3) * 0.05); gl.visible = gl.material.opacity > 0.02; });
