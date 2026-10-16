@@ -69,9 +69,10 @@ icons for the UI · `src/audio.js` WebAudio synth · `src/main.js` boot and loop
   buying, the shop prompt, stall collisions, keyboard, camera drag, shovel, Market Day, stealing from a neighbor,
   rain, save/reload) and checks every step.
 - `node test/economy.mjs [runs]` simulates attentive players from a fresh start (restocks, fruit sizes,
-  mutations, weather and Market Day rolled like the game) and prints when each seed first becomes affordable.
-  `node test/economy.mjs --tune [runs]` re-derives every price and sell value so the gaps between seeds match
-  its `TARGET` list.
+  mutations, weather, Market Day and stealing from the neighbors, all rolled like the game) and prints when each
+  seed first becomes affordable. `--casual` plays like someone who does a round of the garden every half minute
+  and the shops every few; `--no-steal` never steals. `node test/economy.mjs --tune [runs]` re-derives every
+  price and sell value so the gaps between seeds match its `TARGET` list.
 - `node test/plants.mjs [out.png] ["crops=apple,corn&stages=2,3,4,5"]` renders crops side by side, lit like the
   game, for working on the plant models.
 - `node test/gallery.mjs` screenshots a full garden by day, sunset, night, snow and storm.
