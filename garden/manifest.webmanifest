@@ -1,0 +1,11 @@
+{
+  "name": "Grow a Garden",
+  "short_name": "Garden",
+  "description": "A cozy pixel-art garden to grow, harvest and sell.",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#1c2a22",
+  "theme_color": "#2d6c3d",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }]
+}

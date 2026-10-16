@@ -1,0 +1,20 @@
+<!doctype html><html><body style="margin:0">
+<script type="module">
+// Renders the home-screen icon from the game's own sprites.
+import * as A from '../src/art.js';
+import { canvas, painter, ditherRect } from '../src/util.js';
+const N = 32, c = canvas(N, N), g = c.g, P = painter(c);
+for (let y = 0; y < N; y++) { g.fillStyle = y < 13 ? (y < 6 ? '#58a8f0' : '#8fd0ff') : y < 15 ? '#43903f' : '#73452f'; g.fillRect(0, y, N, 1); }
+ditherRect(g, 0, 5, N, 2, '#8fd0ff', 8);
+g.fillStyle = '#93603b'; for (const fy of [19, 24, 29]) g.fillRect(0, fy, N, 1);
+g.fillStyle = '#55332a'; for (const fy of [18, 23, 28]) g.fillRect(0, fy, N, 1);
+const pl = A.plantSprite('strawberry', 5, 1);
+g.drawImage(pl, 16 - A.AX - 1, 23 - A.AY - 1);
+for (const [x, y] of A.ANCHORS.strawberry.pts) { const f = A.fruit('strawberry'); g.drawImage(f, 16 + x - (f.width >> 1), 23 + y - 1); }
+g.drawImage(A.sparkle(1), 24, 4);
+const out = canvas(512, 512);
+out.g.imageSmoothingEnabled = false;
+out.g.drawImage(c, 0, 0, 512, 512);
+window.icon = out.toDataURL('image/png');
+window.done = true;
+</script></body></html>
