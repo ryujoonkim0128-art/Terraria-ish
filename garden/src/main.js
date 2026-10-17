@@ -31,15 +31,20 @@ document.addEventListener('visibilitychange', () => {
 addEventListener('pagehide', save);
 on('buy', save);
 
+// the next frame is asked for first, so one error can't freeze the game; it shows on screen instead (see crash.js)
 function frame(now) {
+  requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (running) for (let k = 0; k < (window.game.speed || 1); k++) sim(dt);
-  World.update(dt, UI.input);
-  UI.update(dt);
-  setNight(World.env.night > 0.5);
-  if ((saveT += dt) > 5) { saveT = 0; save(); }
-  requestAnimationFrame(frame);
+  try {
+    if (running) for (let k = 0; k < (window.game.speed || 1); k++) sim(dt);
+    World.update(dt, UI.input);
+    UI.update(dt);
+    setNight(World.env.night > 0.5);
+    if ((saveT += dt) > 5) { saveT = 0; save(); }
+  } catch (e) {
+    if (window.crashReport) window.crashReport(e);
+  }
 }
 window.game = { get G() { return State.G; }, sim, save, speed: 1, World, UI, State };
 requestAnimationFrame(frame);

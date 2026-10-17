@@ -115,7 +115,10 @@ export function showTitle(app, start) {
   t.id = 'title';
   app.appendChild(t);
   app.classList.add('intro'); Wd.titleView(true);
-  $('button', t).onclick = () => { initAudio(); setSound(G.sound); setMusic(G.music); sfx('open'); t.remove(); app.classList.remove('intro'); Wd.titleView(false); start(); };
+  $('button', t).onclick = () => {
+    t.remove(); app.classList.remove('intro'); Wd.titleView(false); start();
+    try { initAudio(); setSound(G.sound); setMusic(G.music); sfx('open'); } catch { /* the game plays on without sound */ }
+  };
 }
 
 // ---------------------------------------------------------------- hotbar

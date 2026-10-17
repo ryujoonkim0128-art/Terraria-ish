@@ -237,6 +237,20 @@ await page.waitForFunction('window.game && document.querySelector("#title button
 s = await G(() => ({ tut: window.game.G.tut, plants: window.game.G.plants.length }));
 check('save survives a reload', s.tut === 8 && s.plants === 1, s);
 check('no errors', errors.length === 0, errors);
+
+// an error shows on screen with a way out, and the game keeps running behind it
+await page.click('#title button', { force: true });
+await page.waitForTimeout(300);
+const t0 = await G(() => window.game.G.time);
+await G(() => setTimeout(() => { throw new Error('test crash'); }));
+await page.waitForTimeout(600);
+s = await G(() => ({ crash: !!document.getElementById('crash'), msg: (document.querySelector('#crash pre') || {}).textContent || '', btns: [...document.querySelectorAll('#crash button')].map((b) => b.textContent) }));
+await shot('11_crash', 100);
+const t1 = await G(() => window.game.G.time);
+check('an error shows on screen with Reload and Start over, and the game keeps going', s.crash && s.msg.includes('test crash') && s.btns.join() === 'Reload,Start over' && t1 > t0, { ...s, msg: s.msg.split('\n')[0], ran: +(t1 - t0).toFixed(2) });
+await page.mouse.click(20, 120);
+await page.waitForTimeout(200);
+check('tapping outside it keeps playing', !(await G(() => !!document.getElementById('crash'))));
 await browser.close(); server.close();
 console.log(failed ? `${failed} failed` : 'all checks passed');
 process.exit(failed ? 1 : 0);

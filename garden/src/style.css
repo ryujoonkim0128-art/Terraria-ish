@@ -182,4 +182,13 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 #dialog .box { --c: var(--paper); padding: 16px; max-width: 320px; width: 100%; display: grid; gap: 14px; text-align: center; font-size: 16px; }
 #dialog .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 #dialog .btns button { height: 46px; color: #fff; font: 16px/1 var(--display); }
+/* if something breaks: the error and a way out, instead of a frozen screen (crash.js) */
+#crash { position: absolute; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(26,26,46,0.6); }
+#crash .box { --c: var(--paper); max-width: 340px; width: 100%; padding: 16px; display: grid; gap: 10px; text-align: center; color: var(--text); }
+#crash b { font: 20px/1.1 var(--display); }
+#crash p { margin: 0; font-size: 14px; color: var(--muted); }
+#crash pre { margin: 0; max-height: 30vh; overflow: auto; padding: 8px; background: #fffaf0; border-radius: 4px; font: 500 11px/1.35 ui-monospace, Menlo, monospace; text-align: left; white-space: pre-wrap; word-break: break-word; -webkit-user-select: text; user-select: text; }
+#crash .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+#crash button { height: 46px; --c: var(--green); color: #fff; font: 16px/1 var(--display); }
+#crash button.red { --c: var(--red); }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01s !important; transition-duration: 0.01s !important; } }

@@ -58,14 +58,15 @@ teleports, hotbar, shop sheets, tutorial · `src/island.js` the island's shape, 
 islets, clouds and cloud sea · `src/state.js` save data
 and player actions · `src/sim.js` growth, weather, mutations, Market Day · `src/data.js` crop table, prices and
 timings · `src/icons.js` voxel
-icons for the UI · `src/audio.js` WebAudio synth · `src/main.js` boot and loop.
+icons for the UI · `src/audio.js` WebAudio synth · `src/main.js` boot and loop · `src/crash.js` shows what went wrong,
+with Reload and Start over, instead of a frozen screen.
 
 ## Tests
 `npm install`, then:
 - `node test/play.mjs` plays a fresh game on an emulated iPhone with real input (tap planting and spacing,
   walking with the thumbstick, the Collect prompt, tap and hold collecting, the teleport buttons, selling,
   buying, the shop prompt, stall collisions, keyboard, camera drag, the island's edge, shovel, Market Day, rain,
-  save/reload) and checks every step.
+  save/reload, the error screen) and checks every step.
 - `node test/economy.mjs [runs]` simulates players from a fresh start (restocks, fruit sizes, mutations, weather
   and Market Day, all rolled like the game) and prints when each seed first becomes theirs. They pick about three
   fruit a second, the best first (ripe fruit waits on the plant), and go to the seed shop once a minute.
